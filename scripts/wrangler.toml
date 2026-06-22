@@ -1,0 +1,8 @@
+name = "canada-map-viz"
+main = "cloudflare-worker.js"
+compatibility_date = "2025-01-01"
+
+# Secrets are NOT defined here — set them with:
+#   wrangler secret put AISSTREAM_API_KEY
+#   wrangler secret put GFW_API_TOKEN
+#   wrangler secret put ALLOWED_ORIGINS   # optional, e.g. "https://sam10155.github.io"

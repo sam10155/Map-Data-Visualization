@@ -1,0 +1,60 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # SECURE MODE (recommended): only TRACKING_PROXY (a public worker URL)
+      # is written to config.js. API keys live as Cloudflare Worker secrets
+      # and are never shipped to the browser.
+      #
+      # DIRECT MODE: if you don't deploy a worker, also set AISSTREAM_API_KEY
+      # and GFW_API_TOKEN as repo secrets — they'll be embedded client-side
+      # (visible via View Source). Both are free/rotatable, so this is
+      # acceptable but not "secret" in any real sense.
+      - name: Generate data/config.js
+        env:
+          TRACKING_PROXY:    ${{ secrets.TRACKING_PROXY }}
+          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
+          GFW_API_TOKEN:     ${{ secrets.GFW_API_TOKEN }}
+        run: |
+          {
+            echo "// AUTO-GENERATED at deploy time."
+            [ -n "$TRACKING_PROXY" ]    && echo "window.TRACKING_PROXY = \"$TRACKING_PROXY\";"
+            # Only embed direct keys when no worker proxy is configured.
+            if [ -z "$TRACKING_PROXY" ]; then
+              [ -n "$AISSTREAM_API_KEY" ] && echo "window.AISSTREAM_API_KEY = \"$AISSTREAM_API_KEY\";"
+              [ -n "$GFW_API_TOKEN" ]     && echo "window.GFW_API_TOKEN = \"$GFW_API_TOKEN\";"
+            fi
+          } > data/config.js
+          echo "config.js: $(wc -c < data/config.js)b · proxy=${TRACKING_PROXY:+set} ais=${AISSTREAM_API_KEY:+set} gfw=${GFW_API_TOKEN:+set}"
+
+      - name: Stamp APP_VERSION with commit SHA
+        run: |
+          sed -i "s/window.APP_VERSION = '[^']*'/window.APP_VERSION = '${GITHUB_SHA::8}'/" index.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

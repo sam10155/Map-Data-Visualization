@@ -1,0 +1,689 @@
+/* === Base === */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+#map { height: 100vh; width: 100%; }
+
+/* === Control Panel === */
+.control-panel {
+  position: absolute;
+  top: 10px; left: 52px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  width: 400px;
+  max-height: 90vh;
+  overflow: hidden;
+  z-index: 1000;
+}
+
+.panel-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex; justify-content: space-between; align-items: center;
+  cursor: pointer; background: #f9fafb;
+}
+.panel-header:hover { background: #f3f4f6; }
+
+.panel-content {
+  padding: 16px;
+  overflow-y: auto;
+  max-height: calc(90vh - 50px);
+}
+
+.collapsed .panel-content { display: none; }
+
+.stats-box {
+  background: #eff6ff;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.section { margin-bottom: 20px; }
+.section-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+  color: #374151;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* === Checkbox Items === */
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.checkbox-item:hover { background: #f9fafb; }
+
+.color-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.2);
+  flex-shrink: 0;
+}
+
+.status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.facility-notes {
+  font-size: 11px;
+  color: #6b7280;
+  background: #f9fafb;
+  border-left: 3px solid #fbbf24;
+  padding: 4px 6px;
+  margin: 4px 0;
+  border-radius: 3px;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.status-pill {
+  display: inline-block;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin: 4px 0 2px 0;
+  letter-spacing: 0.3px;
+}
+
+/* === Buttons === */
+.download-btn {
+  width: 100%;
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.download-btn:hover { background: #1d4ed8; }
+
+/* === Legend === */
+.legend {
+  position: absolute;
+  bottom: 20px; right: 20px;
+  background: white;
+  padding: 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  font-size: 12px;
+  z-index: 1000;
+}
+.legend-title { font-weight: 600; margin-bottom: 8px; }
+.legend-item { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+
+/* === Aggregation & Metric Sliders === */
+.aggregation-slider {
+  display: flex;
+  background: #e5e7eb;
+  border-radius: 6px;
+  padding: 3px;
+  gap: 2px;
+  position: relative;
+}
+
+.agg-option {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  position: relative;
+  z-index: 1;
+}
+.agg-option:hover { color: #374151; }
+.agg-option.active {
+  background: white;
+  color: #2563eb;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.agg-option:active { transform: scale(0.98); }
+
+/* === Hierarchical Sector / Subcategory === */
+.sector-group { margin-bottom: 8px; }
+
+.sector-header {
+  font-weight: 600;
+  background: #f9fafb;
+  padding: 6px 4px;
+  margin: 0;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.sector-header:hover { background: #f3f4f6; }
+
+.expand-icon {
+  display: inline-block;
+  width: 16px;
+  font-size: 10px;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.subcategory-group {
+  margin-left: 20px;
+  padding-left: 8px;
+  border-left: 2px solid #e5e7eb;
+  margin-top: 4px;
+}
+.subcat-item { padding-left: 4px; font-size: 12px; }
+
+/* === Pie Icon === */
+.pie-icon {
+  border-radius: 50%;
+  background: rgba(255,255,255,0.8);
+  box-shadow: 0 0 5px rgba(0,0,0,0.3);
+}
+
+/* === Table View === */
+#tableView.hidden { display: none; }
+#tableView {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100vh;
+  background: #fafafa;
+  overflow-y: auto;
+  z-index: 900;
+  padding: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+#tableControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+#tableView select,
+#tableView input {
+  padding: 4px 6px;
+  font-size: 14px;
+}
+
+#dataTable {
+  border-collapse: collapse;
+  width: 100%;
+  background: white;
+}
+#dataTable th,
+#dataTable td {
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 13px;
+}
+#dataTable th {
+  background: #f4f4f4;
+  font-weight: 600;
+  cursor: pointer;
+}
+#dataTable tr:nth-child(even) { background: #f9f9f9; }
+
+.coord-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+.coord-link:hover { text-decoration: underline; }
+.coord-link:visited { color: #2563eb; }
+
+/* === Edit Mode Styles === */
+.popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.edit-toggle-btn {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  color: #374151;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.edit-toggle-btn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.edit-toggle-btn.edit-active {
+  background: #ef4444;
+  border-color: #dc2626;
+  color: white;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+  animation: pulse-edit 2s infinite;
+}
+
+.edit-toggle-btn.edit-active:hover {
+  background: #dc2626;
+}
+
+@keyframes pulse-edit {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.1); }
+}
+
+.coord-display {
+  color: #6b7280;
+  font-size: 10px;
+  font-family: monospace;
+}
+
+.save-notification {
+  position: fixed;
+  top: 90px;
+  right: 20px;
+  background: #10b981;
+  color: white;
+  padding: 16px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 10000;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 320px;
+  animation: slideIn 0.3s ease;
+}
+
+.save-notification.fade-out {
+  animation: fadeOut 0.5s ease forwards;
+}
+
+.toast-container {
+  position: fixed;
+  top: 90px; 
+  right: 20px;
+  width: 320px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px; 
+}
+
+.toast-container .save-notification {
+  position: relative;
+  top: 0;
+  right: 0;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  to {
+    opacity: 0;
+    transform: translateX(400px);
+  }
+}
+
+.facility-popup {
+  min-width: 200px;
+  max-width: 350px;
+}
+
+.edit-revert-btn,
+.edit-delete-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  transition: 0.2s;
+  font-weight: 500;
+}
+
+.edit-revert-btn:hover {
+  background: #f3f4f6;
+}
+
+.edit-delete-btn {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+.edit-delete-btn:hover {
+  background: #fee2e2;
+}
+
+/* === Edit Actions (Reset + Download) === */
+.edit-actions-container {
+  position: fixed;
+  top: 12px;
+  right: 184px;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  z-index: 9999;
+}
+
+.edit-actions-container.hidden {
+  display: none;
+}
+
+.edit-action-btn {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: white;
+  box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+  width: 160px;
+}
+
+/* Red reset button */
+.edit-reset-btn {
+  background: #ef4444;
+}
+.edit-reset-btn:hover {
+  background: #dc2626;
+}
+
+/* Blue download button */
+.edit-download-btn {
+  background: #2563eb;
+}
+.edit-download-btn:hover {
+  background: #1d4ed8;
+}
+
+
+/* === Attribute Edit Form === */
+.attribute-edit-form input,
+.attribute-edit-form select {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.attribute-edit-form input:focus,
+.attribute-edit-form select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+/* Modal background */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(2px);
+  z-index: 9998;
+}
+
+/* Modal window */
+.modal-box {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px 25px;
+  border-radius: 10px;
+  z-index: 9999;
+  width: 320px;
+  text-align: center;
+  font-size: 15px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+
+.modal-buttons {
+  margin-top: 18px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.modal-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.modal-confirm {
+  background: #ef4444;
+  color: white;
+}
+
+.modal-cancel {
+  background: #e5e7eb;
+  color: #111;
+}
+
+/* === Map Mode Bar (overlay toggles) === */
+.mapmode-bar {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mapmode-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  transition: all 0.15s ease;
+  min-width: 160px;
+  text-align: left;
+}
+.mapmode-btn:hover { background: #f3f4f6; }
+.mapmode-btn.active {
+  background: #2563eb;
+  color: white;
+  border-color: #1d4ed8;
+}
+.mapmode-btn.loading {
+  opacity: 0.6;
+  cursor: wait;
+}
+.mapmode-icon { font-size: 15px; width: 18px; text-align: center; }
+.mapmode-label { flex: 1; }
+
+/* === Overlay legends (bottom-left, stacked) === */
+.overlay-legend {
+  background: white;
+  padding: 10px 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  font-size: 12px;
+  margin-bottom: 8px;
+  min-width: 200px;
+  max-width: 280px;
+}
+.overlay-legend-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.overlay-legend-title small {
+  font-weight: 400;
+  color: #6b7280;
+  font-size: 10px;
+}
+.overlay-legend .legend-item { margin: 3px 0; }
+.overlay-legend .wx-row {
+  font-size: 11px;
+  color: #4b5563;
+  margin: 3px 0;
+}
+.overlay-legend code { font-size: 10px; background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
+
+.temp-ramp { display: flex; height: 12px; border-radius: 3px; overflow: hidden; margin: 4px 0 2px 0; }
+.temp-ramp span { flex: 1; }
+.temp-labels { display: flex; justify-content: space-between; font-size: 10px; color: #6b7280; }
+.precip-dot {
+  display: inline-block; width: 10px; height: 10px;
+  border: 2px solid #0ea5e9; border-radius: 50%; margin-right: 4px;
+  vertical-align: middle;
+}
+
+.wx-arrow, .wx-storm, .wx-temp-label, .track-plane, .track-ship, .transport-icon, .pwr-icon, .pwr-electron {
+  background: transparent !important; border: none !important;
+}
+
+.landuse-img {
+  position: absolute;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+}
+
+.wx-temp-label div {
+  font-size: 11px; font-weight: 700; color: #111;
+  text-shadow: 0 0 3px white, 0 0 3px white;
+  text-align: center;
+}
+.wx-storm-glyph {
+  font-size: 18px; text-align: center;
+  filter: drop-shadow(0 0 3px #fde047);
+  animation: wx-storm-pulse 1.2s ease-in-out infinite;
+}
+@keyframes wx-storm-pulse {
+  0%,100% { transform: scale(1); opacity: 1; }
+  50%     { transform: scale(1.25); opacity: 0.6; }
+}
+
+/* --- map-mode sub-controls (under an active mode button) --- */
+.mapmode-sub {
+  background: white;
+  border: 1px solid #d1d5db;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  margin-top: -4px;
+  padding: 6px 10px 8px 10px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  font-size: 12px;
+}
+.mapmode-sub-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0; cursor: pointer;
+}
+.mapmode-sub-item input { margin: 0; }
+
+/* --- power overlay --- */
+.kv-swatch {
+  display: inline-block; width: 18px; height: 4px;
+  border-radius: 2px; margin-right: 6px; vertical-align: middle;
+}
+.pipe-pulse { background: transparent !important; border: none !important; }
+.pipe-pulse-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 0 6px 1px currentColor;
+  animation: pwr-electron-glow 1.1s ease-in-out infinite;
+}
+
+.pwr-electron-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 0 8px 2px currentColor;
+  animation: pwr-electron-glow 0.9s ease-in-out infinite;
+}
+@keyframes pwr-electron-glow {
+  0%,100% { transform: scale(0.85); filter: brightness(1); }
+  50%     { transform: scale(1.15); filter: brightness(1.6); }
+}
+
+.top-toolbar {
+  position: absolute;
+  top: 10px;
+  left: calc(52px + 400px + 10px);
+  z-index: 1100;
+  display: flex;
+  gap: 8px;
+}
+
+.toolbar-btn {
+  background: white;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  transition: all 0.15s ease;
+}
+.toolbar-btn:hover { background: #f3f4f6; }
+
+.toolbar-btn-primary {
+  background: #2563eb;
+  color: white;
+  border-color: #1d4ed8;
+}
+.toolbar-btn-primary:hover { background: #1e40af; }
+
+.table-toggle-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1200;
+  min-width: 160px;
+  background: white;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  transition: all 0.15s ease;
+}
+.table-toggle-btn:hover { background: #f3f4f6; }
