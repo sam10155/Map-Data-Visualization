@@ -17,9 +17,11 @@ window.MapModes = (function () {
     return !!active[id];
   }
 
+  const pending = new Set();
+
   async function toggle(id) {
     const def = registry[id];
-    if (!def) return;
+    if (!def || pending.has(id)) return;   // ignore re-entrant clicks
 
     const btn = document.querySelector(`.mapmode-btn[data-mode="${id}"]`);
 
@@ -31,26 +33,33 @@ window.MapModes = (function () {
       return;
     }
 
+    pending.add(id);
     btn?.classList.add('loading');
+    let inst = null, sub = null;
     try {
-      const inst = await def.build();
-      active[id] = inst;
-      btn?.classList.add('active');
+      inst = await def.build();
       if (typeof inst.controls === 'function') {
-        const sub = document.createElement('div');
+        sub = document.createElement('div');
         sub.className = 'mapmode-sub';
         sub.id = `mapmode-sub-${id}`;
         sub.appendChild(inst.controls());
         btn?.insertAdjacentElement('afterend', sub);
       }
       await inst.mount(map);
+      active[id] = inst;
+      btn?.classList.add('active');
     } catch (e) {
       console.error(`[${id}] mount failed`, e);
+      // Roll back any partial state so the user can retry.
+      try { inst?.unmount?.(map); } catch {}
+      sub?.remove();
+      btn?.classList.remove('active');
       if (typeof showSaveNotification === 'function') {
         showSaveNotification(`${def.label}: ${e.message || 'failed to load'}`, false);
       }
     } finally {
       btn?.classList.remove('loading');
+      pending.delete(id);
     }
   }
 

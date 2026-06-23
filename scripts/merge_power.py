@@ -81,8 +81,14 @@ def is_dup_tx(t, existing):
 
 
 def js_str(s):
-    s = html.unescape(s or '')
-    return "'" + s.replace('\\', '\\\\').replace("'", "\\'") + "'"
+    s = html.unescape(str(s or ''))
+    s = (s.replace('\\', '\\\\')
+           .replace("'", "\\'")
+           .replace('\r', '\\r')
+           .replace('\n', '\\n')
+           .replace(' ', '\\u2028')
+           .replace(' ', '\\u2029'))
+    return "'" + s + "'"
 
 
 def fmt_plant(p):

@@ -46,7 +46,18 @@ def load_results():
 
 
 def js_str(s):
-    return "'" + s.replace('\\', '\\\\').replace("'", "\\'") + "'"
+    """Single-quoted JS string literal with full escaping (newlines and
+    line-separator chars would otherwise produce unterminated literals)."""
+    if s is None:
+        return "''"
+    s = str(s)
+    s = (s.replace('\\', '\\\\')
+           .replace("'", "\\'")
+           .replace('\r', '\\r')
+           .replace('\n', '\\n')
+           .replace(' ', '\\u2028')
+           .replace(' ', '\\u2029'))
+    return "'" + s + "'"
 
 
 def set_field(line, key, val):

@@ -5,11 +5,13 @@ window.filters = window.filters || { datasets: {}, sectors: {}, subcategories: {
 function initMap() {
   map = L.map('map').setView([55, -100], 4);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    minZoom: 3,
-    attribution: '© OpenStreetMap'
-  }).addTo(map);
+  if (window.Basemap) {
+    Basemap.init(map);
+  } else {
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18, minZoom: 3, attribution: '© OpenStreetMap'
+    }).addTo(map);
+  }
 
   installExclusivePopupMode();
   installDynamicRadiusScaling();
@@ -175,7 +177,7 @@ async function loadData() {
       fillOpacity: ss.fillOpacity, opacity: ss.opacity, weight: ss.weight, dashArray: ss.dashArray
     })
     .bindPopup(popupNode, { closeOnClick: false, autoClose: false })
-    .bindTooltip(`${f.name} • ${f.subcategory}${f.status !== 'Active' ? ' • ' + f.status : ''}`);
+    .bindTooltip(`${eh(f.name)} • ${eh(f.subcategory)}${f.status !== 'Active' ? ' • ' + f.status : ''}`);
 
     marker._popupContent = popupNode;
     marker._facility = f; 
@@ -327,7 +329,7 @@ function calculateRadius(f) {
     'bbl/d': 0.003, 'MMcf/d': 0.12, 'MTPA': 150, 'kMT/yr': 0.2, 'MW': 0.3
   };
 
-  const val = f.capacity || 0;
+  const val = Math.max(0, Number(f.capacity) || 0);
   const scale = scales[f.unit] || 1e-5;
 
   const base = Math.sqrt(val * scale) + 4;
@@ -345,7 +347,7 @@ function createPopup(f) {
     return createEditablePopup(f);
   }
   
-  return `<b>${f.name}</b><br>${f.operator || ''}<br>${f.city}, ${f.province}<br>
-          <b>${f.subcategory}</b><br>${(f.capacity || 0).toLocaleString()} ${f.unit}<br>
+  return `<b>${eh(f.name)}</b><br>${eh(f.operator || '')}<br>${eh(f.city)}, ${eh(f.province)}<br>
+          <b>${eh(f.subcategory)}</b><br>${(Number(f.capacity) || 0).toLocaleString()} ${eh(f.unit)}<br>
           <small style="color:#6b7280;font-size:10px;font-family:monospace;">📍 ${f.lat.toFixed(5)}, ${f.lon.toFixed(5)}</small>`;
 }

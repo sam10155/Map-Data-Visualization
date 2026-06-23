@@ -109,13 +109,17 @@
       let raf = null;
 
       // ---- plant glyph badges (capacity circle is rendered by the main
-      //      facility layer; this overlay just adds the cute type icon) ----
+      //      facility layer; this overlay just adds the type icon for
+      //      ACTIVE plants only — closed/idle/proposed get the circle but
+      //      no glyph, so the map isn't littered with icons for sites that
+      //      aren't generating). ----
       data.plants.forEach(p => {
+        if (normalizeStatus(p.status) !== 'Active') return;
         const s = TYPE_STYLE[p.type] || TYPE_STYLE.other;
         L.marker([p.lat, p.lon], { icon: plantIcon(p.type), keyboard: false, interactive: false })
           .bindTooltip(
-            `<b>${p.name}</b><br>${s.label} · ${fmtMW(p.mw)}<br>` +
-            `${p.operator || ''}<br>${p.province} · ${normalizeStatus(p.status)}`,
+            `<b>${eh(p.name)}</b><br>${s.label} · ${fmtMW(p.mw)}<br>` +
+            `${eh(p.operator || '')}<br>${eh(p.province)} · Active`,
             { direction: 'top', offset: [0, -12] }
           )
           .addTo(iconGroup);
@@ -128,7 +132,7 @@
         L.polyline(t.path, {
           color: cls.color, weight: cls.weight, opacity: 0.9, dashArray: dash, interactive: true
         })
-        .bindTooltip(`<b>${t.name}</b><br>${t.kv} kV ${t.type}${t.op ? ' · ' + t.op : ''}`, { sticky: true })
+        .bindTooltip(`<b>${eh(t.name)}</b><br>${t.kv} kV ${eh(t.type)}${t.op ? ' · ' + eh(t.op) : ''}`, { sticky: true })
         .addTo(lineGroup);
 
         const pulse = buildPulse(t.path, cls.color);

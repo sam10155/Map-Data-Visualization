@@ -4,6 +4,14 @@ async function createStorageWrapper() {
     console.warn("⚠ Persistent storage API not supported — storage disabled");
     return null;
   }
+  // Safari ≥16.4 supports getDirectory() but NOT createWritable() on the
+  // main thread — feature-detect that specifically so we don't return a
+  // wrapper that throws on every write.
+  if (typeof FileSystemFileHandle === 'undefined' ||
+      typeof FileSystemFileHandle.prototype.createWritable !== 'function') {
+    console.warn("⚠ OPFS writable streams not supported (Safari) — storage disabled");
+    return null;
+  }
 
   try {
     const root = await navigator.storage.getDirectory();

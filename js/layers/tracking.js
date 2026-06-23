@@ -23,7 +23,16 @@
   // Optional proxy (e.g. a Cloudflare Worker) for GitHub-Pages deployments.
   // If set, requests go to `${TRACKING_PROXY}<host>/<path>`. Configure via
   // window.TRACKING_PROXY in data/config.js.
-  const PROXY = window.TRACKING_PROXY || null;
+  const PROXY = (function () {
+    let p = window.TRACKING_PROXY || null;
+    if (!p) return null;
+    p = String(p).trim();
+    // Local dev: serve.py's relative /proxy/ path — leave as-is.
+    if (p.startsWith('/')) return p.replace(/\/?$/, '/');
+    // Hosted worker: ensure protocol + trailing slash.
+    if (!/^https?:\/\//i.test(p)) p = 'https://' + p;
+    return p.replace(/\/?$/, '/');
+  })();
 
   // 250 nm circles — six covers the populated corridor; the north has so
   // little traffic that omitting it costs ~nothing and avoids rate-limits.
@@ -419,7 +428,7 @@
 
       function isCdnFlight(a) {
         if (isCanadianReg(a.reg)) return true;
-        if (a.id && /^c0/i.test(a.id)) return true;        // ICAO24 'C0xxxx' = Canada
+        if (a.id && /^c[0-3]/i.test(a.id)) return true;     // ICAO24 C00000–C3FFFF = Canada
         if (a.opIcao === 'Canada') return true;
         return false;
       }
@@ -427,7 +436,7 @@
       function updateLegend() {
         const el = document.getElementById('tracking-status');
         if (el) el.innerHTML =
-          `✈ ${status.air}<br>🚢 ${status.ship}<br>🐟 ${status.fish}`;
+          `✈ ${eh(status.air)}<br>🚢 ${eh(status.ship)}<br>🐟 ${eh(status.fish)}`;
       }
 
       async function loadFishing() {
@@ -439,9 +448,9 @@
           events.forEach(v => {
             L.marker([v.lat, v.lon], { icon: fishIcon(), keyboard: false })
               .bindTooltip(
-                `<b>🐟 ${v.name}</b>` +
-                (v.flag ? ` · ${v.flag}` : '') + '<br>' +
-                (v.mmsi ? `MMSI ${v.mmsi}<br>` : '') +
+                `<b>🐟 ${eh(v.name)}</b>` +
+                (v.flag ? ` · ${eh(v.flag)}` : '') + '<br>' +
+                (v.mmsi ? `MMSI ${eh(v.mmsi)}<br>` : '') +
                 `Fishing event ${v.start ? new Date(v.start).toISOString().slice(0,16).replace('T',' ') : ''}` +
                 (v.end ? ` → ${new Date(v.end).toISOString().slice(0,16).replace('T',' ')}` : '') +
                 `<br><span style="font-size:10px;color:#9ca3af;">Global Fishing Watch (delayed)</span>`,
@@ -460,18 +469,18 @@
         const route = a.callsign ? ROUTE_CACHE.get(a.callsign) : undefined;
         let routeHtml = '';
         if (route) {
-          routeHtml = `<b>${route.from} → ${route.to}</b>` +
-            (route.airline ? ` · ${route.airline}` : '') + '<br>' +
-            `<span style="font-size:10px;color:#6b7280;">${route.fromName || ''}<br>→ ${route.toName || ''}</span><br>`;
+          routeHtml = `<b>${eh(route.from)} → ${eh(route.to)}</b>` +
+            (route.airline ? ` · ${eh(route.airline)}` : '') + '<br>' +
+            `<span style="font-size:10px;color:#6b7280;">${eh(route.fromName || '')}<br>→ ${eh(route.toName || '')}</span><br>`;
         } else if (route === undefined && a.callsign) {
           routeHtml = '<span style="font-size:10px;color:#9ca3af;">route: looking up…</span><br>';
         } else if (route === null) {
           routeHtml = '<span style="font-size:10px;color:#9ca3af;">route: unknown</span><br>';
         }
-        return `<b>${a.callsign || a.reg || a.id}</b>` +
-          (a.type ? ` · ${a.type}` : '') +
-          ` <span style="font-size:10px;color:#6b7280;">${CAT_LABEL[a._cat]}</span><br>` +
-          (a.reg ? `${a.reg}${cdn ? ' 🇨🇦' : ''}<br>` : '') +
+        return `<b>${eh(a.callsign || a.reg || a.id)}</b>` +
+          (a.type ? ` · ${eh(a.type)}` : '') +
+          ` <span style="font-size:10px;color:#6b7280;">${CAT_LABEL[a._cat] || ''}</span><br>` +
+          (a.reg ? `${eh(a.reg)}${cdn ? ' 🇨🇦' : ''}<br>` : '') +
           routeHtml +
           `Alt ${a.alt != null ? Math.round(a.alt).toLocaleString() + ' ft' : '—'} · ` +
           `${Math.round(a.gs || 0)} kt · hdg ${Math.round(a.track || 0)}°`;
@@ -553,7 +562,7 @@
         };
         ws.onerror = () => { status.ship = 'WS error'; updateLegend(); };
         ws.onclose = (ev) => {
-          status.ship = `disconnected (${ev.code}${ev.reason ? ': '+ev.reason : ''})`;
+          status.ship = `disconnected (${ev.code})`;
           updateLegend(); ws = null;
         };
 
@@ -616,9 +625,9 @@
             entry.marker.setIcon(shipIcon(heading, matched));
           }
           entry.marker.bindTooltip(
-            `<b>${(entry.name || meta.ShipName || 'Vessel').toString().trim()}</b><br>` +
-            `MMSI ${mmsi}<br>` +
-            (entry.dest ? `Dest: ${entry.dest}<br>` : '') +
+            `<b>${eh((entry.name || meta.ShipName || 'Vessel').toString().trim())}</b><br>` +
+            `MMSI ${eh(mmsi)}<br>` +
+            (entry.dest ? `Dest: ${eh(entry.dest)}<br>` : '') +
             `${sog.toFixed(1)} kn · hdg ${Math.round(heading)}°`,
             { direction: 'top', offset: [0, -8] }
           );

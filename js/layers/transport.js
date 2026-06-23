@@ -47,7 +47,7 @@
       [...data.ports, ...data.airports].forEach(p => {
         const s = TYPE_STYLE[p.type] || TYPE_STYLE['seaport'];
         L.marker([p.lat, p.lon], { icon: makeIcon(p.type), keyboard: false })
-          .bindTooltip(`<b>${p.name}</b><br>${s.label}${p.code ? ' • ' + p.code : ''}<br>${p.city}, ${p.province}`,
+          .bindTooltip(`<b>${eh(p.name)}</b><br>${s.label}${p.code ? ' • ' + eh(p.code) : ''}<br>${eh(p.city)}, ${eh(p.province)}`,
             { direction: 'top', offset: [0, -10] })
           .addTo(group);
       });

@@ -1,3 +1,18 @@
+// HTML-escape for any string that flows into innerHTML / bindTooltip /
+// bindPopup. ALL external-feed values (AIS, ADS-B, GFW, Overpass, AAFC,
+// adsbdb) and user-editable facility fields MUST go through this.
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+window.escapeHtml = escapeHtml;
+const eh = escapeHtml;
+
 const STATUS_VALUES = ['Active', 'Idle', 'Closed', 'Under Construction', 'Proposed'];
 
 const STATUS_STYLES = {

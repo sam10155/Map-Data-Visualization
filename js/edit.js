@@ -88,7 +88,11 @@ async function savePositionOverride(facility) {
 }
 
 async function saveAttributeOverride(facility) {
-  const safeKey = `marker-attr:${sanitizeStorageKey(facility.name)}`;
+  // Key by the ORIGINAL name so the override is found again on reload
+  // (applyAttributeOverride looks up by the source-data name). The new
+  // name is stored as a field and applied via Object.assign.
+  const keyName = facility._originalAttrs?.name || facility.name;
+  const safeKey = `marker-attr:${sanitizeStorageKey(keyName)}`;
   const data = {
     name: facility.name,
     operator: facility.operator,
@@ -222,7 +226,8 @@ async function revertMarkerPosition() {
 async function revertMarkerAttributes() {
   if (!editingMarker || !editingFacility) return;
 
-  const safeKey = `marker-attr:${sanitizeStorageKey(editingFacility.name)}`;
+  const keyName = editingFacility._originalAttrs?.name || editingFacility.name;
+  const safeKey = `marker-attr:${sanitizeStorageKey(keyName)}`;
 
   if (window.storage) {
     await window.storage.delete(safeKey);
@@ -374,58 +379,58 @@ function showAttributeEditForm() {
     
     <div style="margin-bottom: 6px;">
       <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">Name:</label>
-      <input type="text" id="edit-name" value="${editingFacility.name}" 
+      <input type="text" id="edit-name" value="${eh(editingFacility.name)}"
              style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
     </div>
-    
+
     <div style="margin-bottom: 6px;">
       <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">Operator:</label>
-      <input type="text" id="edit-operator" value="${editingFacility.operator || ''}" 
+      <input type="text" id="edit-operator" value="${eh(editingFacility.operator || '')}"
              style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
     </div>
-    
+
     <div style="margin-bottom: 6px;">
       <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">City:</label>
-      <input type="text" id="edit-city" value="${editingFacility.city}" list="city-options"
+      <input type="text" id="edit-city" value="${eh(editingFacility.city)}" list="city-options"
              style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
       <datalist id="city-options">
-        ${allCities.map(c => `<option value="${c}">`).join('')}
+        ${allCities.map(c => `<option value="${eh(c)}">`).join('')}
       </datalist>
     </div>
-    
+
     <div style="margin-bottom: 6px;">
       <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">Province:</label>
       <select id="edit-province" style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
-        ${allProvinces.map(p => `<option value="${p}" ${p === editingFacility.province ? 'selected' : ''}>${p}</option>`).join('')}
+        ${allProvinces.map(p => `<option value="${eh(p)}" ${p === editingFacility.province ? 'selected' : ''}>${eh(p)}</option>`).join('')}
       </select>
     </div>
-    
+
     <div style="margin-bottom: 6px;">
       <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">Sector:</label>
       <select id="edit-sector" style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
-        ${allSectors.map(s => `<option value="${s}" ${s === editingFacility.sector ? 'selected' : ''}>${s}</option>`).join('')}
+        ${allSectors.map(s => `<option value="${eh(s)}" ${s === editingFacility.sector ? 'selected' : ''}>${eh(s)}</option>`).join('')}
       </select>
     </div>
-    
+
     <div style="margin-bottom: 6px;">
       <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">Subcategory:</label>
-      <input type="text" id="edit-subcategory" value="${editingFacility.subcategory}" list="subcat-options"
+      <input type="text" id="edit-subcategory" value="${eh(editingFacility.subcategory)}" list="subcat-options"
              style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
       <datalist id="subcat-options">
-        ${allSubcategories.map(s => `<option value="${s}">`).join('')}
+        ${allSubcategories.map(s => `<option value="${eh(s)}">`).join('')}
       </datalist>
     </div>
-    
+
     <div style="display: flex; gap: 6px; margin-bottom: 6px;">
       <div style="flex: 1;">
         <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">Capacity:</label>
-        <input type="number" id="edit-capacity" value="${editingFacility.capacity || 0}"
+        <input type="number" id="edit-capacity" value="${Number(editingFacility.capacity) || 0}"
                style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
       </div>
       <div style="flex: 1;">
         <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px;">Unit:</label>
         <select id="edit-unit" style="width: 100%; padding: 4px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 3px;">
-          ${allUnits.map(u => `<option value="${u}" ${u === editingFacility.unit ? 'selected' : ''}>${u}</option>`).join('')}
+          ${allUnits.map(u => `<option value="${eh(u)}" ${u === editingFacility.unit ? 'selected' : ''}>${eh(u)}</option>`).join('')}
         </select>
       </div>
     </div>
@@ -511,7 +516,7 @@ async function saveAttributeChanges() {
   });
 
   marker.unbindTooltip();
-  marker.bindTooltip(`${name} • ${subcategory}${status !== 'Active' ? ' • ' + status : ''}`);
+  marker.bindTooltip(`${eh(name)} • ${eh(subcategory)}${status !== 'Active' ? ' • ' + status : ''}`);
 
   const success = await saveAttributeOverride(facility);
   
@@ -637,7 +642,7 @@ function enableMarkerDragging(marker, facility) {
     updateCoordinatesInPopup(facility);
 
     if (!marker.getTooltip()) {
-        marker.bindTooltip(`${facility.name} • ${facility.subcategory}`);
+        marker.bindTooltip(`${eh(facility.name)} • ${eh(facility.subcategory)}`);
     }
   }
   
@@ -663,7 +668,7 @@ function disableMarkerDragging(marker) {
   if (marker._tooltipDisabled) {
     const facility = marker._facility;
     if (facility) {
-      marker.bindTooltip(`${facility.name} • ${facility.subcategory}`);
+      marker.bindTooltip(`${eh(facility.name)} • ${eh(facility.subcategory)}`);
     }
     delete marker._tooltipDisabled;
   }
@@ -743,8 +748,9 @@ function createEditablePopup(facility) {
   const div = document.createElement('div');
   div.className = 'facility-popup';
   
-  const safeKey = `marker-pos:${sanitizeStorageKey(facility.name)}`;
-  const attrKey = `marker-attr:${sanitizeStorageKey(facility.name)}`;
+  const keyName = facility._originalAttrs?.name || facility.name;
+  const safeKey = `marker-pos:${sanitizeStorageKey(keyName)}`;
+  const attrKey = `marker-attr:${sanitizeStorageKey(keyName)}`;
   const hasPositionOverride = window._positionCache && window._positionCache[safeKey];
   const hasAttributeOverride = window._attributeCache && window._attributeCache[attrKey];
   
@@ -753,15 +759,15 @@ function createEditablePopup(facility) {
 
   const content = `
     <div class="popup-header">
-        <b>${facility.name}</b>
+        <b>${eh(facility.name)}</b>
         <div style="display: flex; gap: 4px;" id="editButtonsContainer"></div>
     </div>
-    ${facility.operator ? `<div>${facility.operator}</div>` : ''}
-    <div>${facility.city}, ${facility.province}</div>
-    <b>${facility.subcategory}</b><br>
-    ${(facility.capacity || 0).toLocaleString()} ${facility.unit}<br>
+    ${facility.operator ? `<div>${eh(facility.operator)}</div>` : ''}
+    <div>${eh(facility.city)}, ${eh(facility.province)}</div>
+    <b>${eh(facility.subcategory)}</b><br>
+    ${(facility.capacity || 0).toLocaleString()} ${eh(facility.unit)}<br>
     <span class="status-pill" style="background:${sBadge}">${fStatus}</span><br>
-    ${facility.notes ? `<div class="facility-notes">📝 ${facility.notes}</div>` : ''}
+    ${facility.notes ? `<div class="facility-notes">📝 ${eh(facility.notes)}</div>` : ''}
     <small class="coord-display">📍 ${facility.lat.toFixed(5)}, ${facility.lon.toFixed(5)}</small>
     ${hasPositionOverride ? '<br><small class="custom-position-indicator" style="color:#10b981;font-size:10px;">✓ Custom position</small>' : ''}
     ${hasAttributeOverride ? '<br><small class="custom-position-indicator" style="color:#10b981;font-size:10px;">✓ Custom attributes</small>' : ''}

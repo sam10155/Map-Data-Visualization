@@ -14,8 +14,26 @@ mimetypes.add_type('application/javascript', '.js')
 mimetypes.add_type('text/css', '.css')
 mimetypes.add_type('application/json', '.geojson')
 
-HOST = '0.0.0.0'
+# Bind to loopback by default — this is a *dev* server with a CORS proxy
+# and full filesystem read access; exposing it to the LAN is a footgun.
+# Pass an explicit host as the second arg to override.
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
+HOST = sys.argv[2] if len(sys.argv) > 2 else '127.0.0.1'
+
+MAX_PROXY_BODY = 256 * 1024   # 256 KB — far more than any feed needs
+
+# Build an opener that NEVER follows redirects. urllib's default
+# HTTPRedirectHandler would let an allow-listed upstream 302 to an
+# arbitrary host (e.g. cloud metadata at 169.254.169.254).
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code,
+            f'redirect to {newurl} blocked by proxy', headers, fp)
+
+_opener = urllib.request.build_opener(
+    _NoRedirect,
+    urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+)
 
 # Allow-list of upstream hosts the proxy will forward to.
 PROXY_ALLOW = {
@@ -29,9 +47,6 @@ PROXY_ALLOW = {
     'api.open-meteo.com',
     'gateway.api.globalfishingwatch.org',
 }
-
-_ssl_ctx = ssl.create_default_context()
-
 
 class Handler(SimpleHTTPRequestHandler):
 
@@ -53,40 +68,51 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(400, 'bad proxy path'); return
         host, upstream_path = rest.split('/', 1)
         if host not in PROXY_ALLOW:
-            self.send_error(403, f'host not allowed: {host}'); return
+            self.send_error(403, 'host not allowed'); return
         url = f'https://{host}/{upstream_path}'
 
         body = None
         if method == 'POST':
-            length = int(self.headers.get('Content-Length', '0') or 0)
+            try:
+                length = int(self.headers.get('Content-Length', '0') or 0)
+            except ValueError:
+                self.send_error(400, 'bad content-length'); return
+            if length < 0 or length > MAX_PROXY_BODY:
+                self.send_error(413, 'request body too large'); return
             body = self.rfile.read(length) if length else None
+
+        # Only forward a fixed Content-Type — don't pass arbitrary client headers.
+        ct = self.headers.get('Content-Type', '')
+        fwd_ct = 'application/json' if 'json' in ct else 'application/x-www-form-urlencoded'
 
         req = urllib.request.Request(
             url, data=body, method=method,
             headers={
                 'User-Agent': 'canada-map-viz/1.0',
                 'Accept': 'application/json',
-                'Content-Type': self.headers.get('Content-Type',
-                                                  'application/x-www-form-urlencoded'),
+                'Content-Type': fwd_ct,
             })
         try:
-            with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as r:
+            with _opener.open(req, timeout=60) as r:
                 data = r.read()
                 self.send_response(r.status)
-                self.send_header('Content-Type',
-                                 r.headers.get('Content-Type', 'application/json'))
+                # Force JSON/text — never relay text/html (would execute on
+                # localhost origin if upstream returns an HTML error page).
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Content-Length', str(len(data)))
+                self.send_header('X-Content-Type-Options', 'nosniff')
                 self.end_headers()
                 self.wfile.write(data)
         except urllib.error.HTTPError as e:
             data = e.read()
             self.send_response(e.code)
-            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(data)))
+            self.send_header('X-Content-Type-Options', 'nosniff')
             self.end_headers()
             self.wfile.write(data)
         except Exception as e:
-            self.send_error(502, f'upstream error: {e}')
+            self.send_error(502, 'upstream error')
 
     def do_GET(self):
         if self.path.startswith('/proxy/'):

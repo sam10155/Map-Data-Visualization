@@ -76,7 +76,16 @@ def map_status(s):
 
 
 def js_str(s):
-    return "'" + s.replace('\\', '\\\\').replace("'", "\\'") + "'"
+    if s is None:
+        return "''"
+    s = str(s)
+    s = (s.replace('\\', '\\\\')
+           .replace("'", "\\'")
+           .replace('\r', '\\r')
+           .replace('\n', '\\n')
+           .replace(' ', '\\u2028')
+           .replace(' ', '\\u2029'))
+    return "'" + s + "'"
 
 
 def main():

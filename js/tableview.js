@@ -32,14 +32,14 @@ function renderTable() {
         const lat = d.lat?.toFixed(4) ?? "";
         const lon = d.lon?.toFixed(4) ?? "";
         if (!lat || !lon) return `<td></td>`;
-        return `<td><a href="#" class="coord-link" data-lat="${lat}" data-lon="${lon}" data-name="${d.name}">${lat};${lon}</a></td>`;
+        return `<td><a href="#" class="coord-link" data-lat="${lat}" data-lon="${lon}" data-name="${eh(d.name)}">${lat};${lon}</a></td>`;
       }
       if (c === "status") {
         const st = normalizeStatus(d.status);
         const badge = (STATUS_STYLES[st] || STATUS_STYLES['Active']).badge;
         return `<td><span class="status-pill" style="background:${badge}">${st}</span></td>`;
       }
-      return `<td>${d[c] ?? ""}</td>`;
+      return `<td>${eh(d[c] ?? "")}</td>`;
     }).join("");
     tableBody.insertAdjacentHTML("beforeend", `<tr>${cells}</tr>`);
   });
@@ -167,7 +167,7 @@ function initTableView() {
 
   exportBtn.onclick = () => {
     const csv = [columns.join(",")].concat(
-      filteredData.map(d => columns.map(c => `"${d[c] ?? ""}"`).join(","))
+      filteredData.map(d => columns.map(c => `"${String(d[c] ?? "").replace(/"/g, '""')}"`).join(","))
     ).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);

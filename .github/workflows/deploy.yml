@@ -36,21 +36,33 @@ jobs:
           TRACKING_PROXY:    ${{ secrets.TRACKING_PROXY }}
           AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
           GFW_API_TOKEN:     ${{ secrets.GFW_API_TOKEN }}
+        # Use a Python script so secret values are JSON-escaped and never
+        # pass through shell interpolation (a secret containing `$(…)` or
+        # backticks would otherwise be executed by `echo "…"`).
+        shell: python
         run: |
-          {
-            echo "// AUTO-GENERATED at deploy time."
-            [ -n "$TRACKING_PROXY" ]    && echo "window.TRACKING_PROXY = \"$TRACKING_PROXY\";"
-            # Only embed direct keys when no worker proxy is configured.
-            if [ -z "$TRACKING_PROXY" ]; then
-              [ -n "$AISSTREAM_API_KEY" ] && echo "window.AISSTREAM_API_KEY = \"$AISSTREAM_API_KEY\";"
-              [ -n "$GFW_API_TOKEN" ]     && echo "window.GFW_API_TOKEN = \"$GFW_API_TOKEN\";"
-            fi
-          } > data/config.js
-          echo "config.js: $(wc -c < data/config.js)b · proxy=${TRACKING_PROXY:+set} ais=${AISSTREAM_API_KEY:+set} gfw=${GFW_API_TOKEN:+set}"
+          import json, os
+          out = ['// AUTO-GENERATED at deploy time.']
+          proxy = os.environ.get('TRACKING_PROXY', '').strip()
+          if proxy:
+              out.append(f'window.TRACKING_PROXY = {json.dumps(proxy)};')
+          else:
+              for k in ('AISSTREAM_API_KEY', 'GFW_API_TOKEN'):
+                  v = os.environ.get(k, '').strip()
+                  if v:
+                      out.append(f'window.{k} = {json.dumps(v)};')
+          with open('data/config.js', 'w') as f:
+              f.write('\n'.join(out) + '\n')
+          print(f"config.js: {sum(len(l)+1 for l in out)}b · "
+                f"proxy={'set' if proxy else '-'} "
+                f"ais={'set' if os.environ.get('AISSTREAM_API_KEY') else '-'} "
+                f"gfw={'set' if os.environ.get('GFW_API_TOKEN') else '-'}")
 
-      - name: Stamp APP_VERSION with commit SHA
+      - name: Stamp APP_VERSION (SHA + run number for cache-busting on re-runs)
         run: |
-          sed -i "s/window.APP_VERSION = '[^']*'/window.APP_VERSION = '${GITHUB_SHA::8}'/" index.html
+          V="${GITHUB_SHA::8}-${GITHUB_RUN_NUMBER}"
+          sed -i "s/window.APP_VERSION = '[^']*'/window.APP_VERSION = '${V}'/" index.html
+          echo "APP_VERSION=${V}"
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

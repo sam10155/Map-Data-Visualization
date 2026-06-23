@@ -87,8 +87,8 @@
           dashArray: dash, interactive: true
         })
         .bindTooltip(
-          `<b>${p.name}</b><br>${c.label} · ${p.cap} ${p.unit}` +
-          `<br>${p.op || ''}${st !== 'Active' ? ' · ' + st : ''}`,
+          `<b>${eh(p.name)}</b><br>${c.label} · ${p.cap} ${eh(p.unit)}` +
+          `<br>${eh(p.op || '')}${st !== 'Active' ? ' · ' + st : ''}`,
           { sticky: true }
         )
         .addTo(lineGroup);

@@ -15,6 +15,11 @@ function initializeFilters() {
 }
 
 function buildUI() {
+  if (window.Basemap && !document.getElementById('basemap-section')) {
+    const panelContent = document.querySelector('#controlPanel .panel-content');
+    if (panelContent) Basemap.buildControls(panelContent);
+  }
+
   buildDatasetFilters();
   buildStatusFilters();
   buildCombinedSectorFilters();

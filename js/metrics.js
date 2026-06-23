@@ -234,9 +234,10 @@ function computeMetricCounts(facilities, metric) {
 
 function setMetric(metric) {
   if (!['facilities', 'capacities', 'workers'].includes(metric)) return;
-  
+
   currentMetric = metric;
-  
+  window.currentMetric = metric;
+
   ['facilities', 'capacities', 'workers'].forEach(m => {
     const btn = document.getElementById(`metric-${m}`);
     if (btn) {

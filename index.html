@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <title>Canada Industrial Capacity Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="css/style.css" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+        crossorigin="anonymous" />
   <script>
-    // Cache-buster: append ?v=<mtime-ish> to all subsequent local script/css.
-    // Python's SimpleHTTPServer doesn't send useful cache headers, so the
-    // browser aggressively caches stale JS. Bump APP_VERSION on each deploy.
-    window.APP_VERSION = '20260622o';
-    document.write('<style>/* v='+APP_VERSION+' */</style>');
+    // Cache-buster: append ?v=<version> to all local scripts AND css.
+    window.APP_VERSION = '20260623i';
+    document.write('<link rel="stylesheet" href="css/style.css?v=' +
+      encodeURIComponent(window.APP_VERSION) + '">');
   </script>
 </head>
 <body>
@@ -62,18 +64,25 @@
       <tbody></tbody>
     </table>
   </div>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+          crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"
+          integrity="sha384-mFKkGiGvT5vo1fEyGCD3hshDdKmW3wzXW/x+fWriYJArD0R3gawT6lMvLboM22c0"
+          crossorigin="anonymous"></script>
   <script>
     (function(){
       var v = '?v=' + (window.APP_VERSION || Date.now());
       [
         'data/config.js',
         'data/canada-data.js',
+        'data/canada-livestock.js',
         'data/canada-water-basins.js',
         'data/canada-ports-airports.js',
         'data/canada-power.js',
         'data/canada-pipelines.js',
         'js/constants.js',
+        'js/basemap.js',
         'js/metrics.js',
         'js/edit.js',
         'js/map.js',

@@ -40,7 +40,7 @@ window.CANADA_TRANSPORT = {
     {name:'Port of Trois-Rivières',type:'seaport',code:'CATRV',city:'Trois-Rivières',province:'QC',lat:46.3450,lon:-72.5400},
     {name:'Port of Bécancour',type:'seaport',code:'CABEC',city:'Bécancour',province:'QC',lat:46.3900,lon:-72.3800},
     {name:'Port of Québec',type:'seaport',code:'CAQUE',city:'Québec',province:'QC',lat:46.8200,lon:-71.2000},
-    {name:'Port of Saguenay',type:'seaport',code:'CASAG',city:'La Baie',province:'QC',lat:48.3300,lon:-70.7700},
+    {name:'Port of Saguenay',type:'seaport',code:'CASAG',city:'La Baie (Grande-Anse)',province:'QC',lat:48.4050,lon:-70.8350},
     {name:'Port of Baie-Comeau',type:'seaport',code:'CABCO',city:'Baie-Comeau',province:'QC',lat:49.2200,lon:-68.1500},
     {name:'Port-Cartier',type:'seaport',code:'CAPCA',city:'Port-Cartier',province:'QC',lat:50.0300,lon:-66.8700},
     {name:'Port of Sept-Îles',type:'seaport',code:'CASEI',city:'Sept-Îles',province:'QC',lat:50.2100,lon:-66.3800},
@@ -63,16 +63,16 @@ window.CANADA_TRANSPORT = {
     {name:'Port of Long Harbour',type:'seaport',code:'CALHB',city:'Long Harbour',province:'NL',lat:47.4200,lon:-53.8200},
 
     // ---- Inland ports / dry ports ----
-    {name:'CentrePort Canada',type:'inland-port',code:'CAWNP-IP',city:'Winnipeg',province:'MB',lat:49.9450,lon:-97.2900},
-    {name:'Global Transportation Hub',type:'inland-port',code:'CAGTH',city:'Regina',province:'SK',lat:50.4250,lon:-104.7800},
-    {name:'Port Alberta (Edmonton)',type:'inland-port',code:'CAEDM-IP',city:'Edmonton',province:'AB',lat:53.5800,lon:-113.5500},
-    {name:'Calgary Region Inland Port',type:'inland-port',code:'CACAL-IP',city:'Calgary (Rocky View)',province:'AB',lat:51.1500,lon:-113.8700},
-    {name:'Ashcroft Terminal',type:'inland-port',code:'CAASH',city:'Ashcroft',province:'BC',lat:50.7100,lon:-121.2700},
-    {name:'CN Brampton Intermodal',type:'inland-port',code:'CABRM-IP',city:'Brampton',province:'ON',lat:43.7200,lon:-79.6700},
-    {name:'CPKC Vaughan Intermodal',type:'inland-port',code:'CAVGN-IP',city:'Vaughan',province:'ON',lat:43.8500,lon:-79.5600},
-    {name:'CN Taschereau Intermodal',type:'inland-port',code:'CAMTR-IP',city:'Montréal',province:'QC',lat:45.4850,lon:-73.6950},
-    {name:'CN Moncton Intermodal',type:'inland-port',code:'CAMNC-IP',city:'Moncton',province:'NB',lat:46.1130,lon:-64.8050},
-    {name:'Saskatoon Inland Terminal',type:'inland-port',code:'CASKT-IP',city:'Saskatoon',province:'SK',lat:52.1420,lon:-106.6750}
+    {name:'CentrePort Canada',type:'inland-port',code:'CAWNP-IP',city:'Winnipeg (Rosser)',province:'MB',lat:49.9460,lon:-97.2860},
+    {name:'Global Transportation Hub',type:'inland-port',code:'CAGTH',city:'Regina',province:'SK',lat:50.4360,lon:-104.7950},
+    {name:'CN Edmonton Intermodal (Walker Yard)',type:'inland-port',code:'CAEDM-IP',city:'Edmonton',province:'AB',lat:53.5740,lon:-113.3950},
+    {name:'CN Calgary Logistics Park',type:'inland-port',code:'CACAL-IP',city:'Conrich (Rocky View)',province:'AB',lat:51.0770,lon:-113.8600},
+    {name:'Ashcroft Terminal',type:'inland-port',code:'CAASH',city:'Ashcroft',province:'BC',lat:50.6920,lon:-121.2880},
+    {name:'CN Brampton Intermodal (BIT)',type:'inland-port',code:'CABRM-IP',city:'Brampton',province:'ON',lat:43.7330,lon:-79.6770},
+    {name:'CPKC Vaughan Intermodal',type:'inland-port',code:'CAVGN-IP',city:'Vaughan',province:'ON',lat:43.7900,lon:-79.6120},
+    {name:'CN Taschereau Intermodal',type:'inland-port',code:'CAMTR-IP',city:'Montréal (Saint-Laurent)',province:'QC',lat:45.4850,lon:-73.6950},
+    {name:'CN Moncton (Gordon Yard)',type:'inland-port',code:'CAMNC-IP',city:'Moncton',province:'NB',lat:46.1010,lon:-64.8230},
+    {name:'CN Saskatoon (Chappell Yard)',type:'inland-port',code:'CASKT-IP',city:'Saskatoon',province:'SK',lat:52.1010,lon:-106.7430}
   ],
 
   airports: [

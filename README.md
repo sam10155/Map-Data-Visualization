@@ -200,8 +200,8 @@ Power plants follow the same shape with `sector:'Power Generation'`, `subcategor
 ## 🚧 Roadmap
 
 - [ ] Accurate NRCan ocean-drainage-area polygons (`data/canada-basins.geojson`) once a stable public endpoint is found
-- [ ] Census-of-Agriculture livestock-density choropleth (cattle/hog farming by census division)
-- [ ] Dark / satellite basemap toggle
+- [x] Census-of-Agriculture livestock-density choropleth (cattle/pigs/sheep/poultry by census division) — under 🌾 Land Use
+- [x] Dark / satellite / night basemap toggle + 🌙 dark-UI mode — top of Layer Controls
 - [ ] Backend database + collaborative editing
 
 ---

@@ -179,8 +179,8 @@
               color: basin ? basin.color : '#1d4ed8',
               weight: flowWidth(q), opacity: 0.9, interactive: true
             }).bindTooltip(
-              `<b>${name || 'Unnamed river'}</b>` +
-              (basin ? `<br>${basin.name}` : '') +
+              `<b>${eh(name) || 'Unnamed river'}</b>` +
+              (basin ? `<br>${eh(basin.name)}` : '') +
               (q ? `<br>~${q.toLocaleString()} m³/s mean flow` : ''),
               { sticky: true }
             ).addTo(osmGroup);
@@ -284,8 +284,8 @@
             color, weight: flowWidth(q), opacity: 0.92, interactive: true
           })
           .bindTooltip(
-            `<b>${name || 'Unnamed river'}</b>` +
-            (basin ? `<br>${basin.name}` : '') +
+            `<b>${eh(name) || 'Unnamed river'}</b>` +
+            (basin ? `<br>${eh(basin.name)}` : '') +
             (q ? `<br>~${q.toLocaleString()} m³/s mean flow` : ''),
             { sticky: true }
           )

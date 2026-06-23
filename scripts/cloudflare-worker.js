@@ -25,27 +25,43 @@ const PROXY_ALLOW = new Set([
   'api.adsbdb.com',
 ]);
 
-function cors(env, extra = {}) {
-  const allowed = env.ALLOWED_ORIGINS || '*';
-  return {
-    'Access-Control-Allow-Origin': allowed,
+function allowedOriginsList(env) {
+  const v = (env.ALLOWED_ORIGINS || '*').trim();
+  return v === '*' ? null : v.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function cors(env, req, extra = {}) {
+  // ACAO must be a SINGLE origin or '*' — never a comma list. Echo the
+  // request Origin if it's in the allow-list; otherwise emit nothing
+  // (browser will block, which is the intent).
+  const list = allowedOriginsList(env);
+  const reqOrigin = req?.headers.get('Origin') || '';
+  const acao = list === null ? '*' : (list.includes(reqOrigin) ? reqOrigin : '');
+  const h = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Vary': 'Origin',
     ...extra,
   };
+  if (acao) h['Access-Control-Allow-Origin'] = acao;
+  return h;
 }
 
 function originAllowed(req, env) {
-  const allowed = (env.ALLOWED_ORIGINS || '*').trim();
-  if (allowed === '*') return true;
+  const list = allowedOriginsList(env);
+  if (list === null) return true;
   const origin = req.headers.get('Origin') || '';
-  return allowed.split(',').map(s => s.trim()).includes(origin);
+  // NOTE: Origin is client-supplied and trivially spoofed by non-browser
+  // clients. This gate stops other *websites* from using the worker
+  // (browsers enforce Origin honestly), but does NOT stop curl. For real
+  // abuse-resistance add Cloudflare rate-limiting / Turnstile.
+  return list.includes(origin);
 }
 
 async function handleGfw(req, env) {
   if (!env.GFW_API_TOKEN) {
     return new Response(JSON.stringify({ error: 'GFW_API_TOKEN not configured on worker' }),
-      { status: 503, headers: cors(env, { 'Content-Type': 'application/json' }) });
+      { status: 503, headers: cors(env, req, { 'Content-Type': 'application/json' }) });
   }
   const url = new URL(req.url);
   const upstream = `https://gateway.api.globalfishingwatch.org/v3/events${url.search}`;
@@ -56,10 +72,11 @@ async function handleGfw(req, env) {
       'Content-Type': 'application/json',
     },
     body: await req.text(),
+    redirect: 'manual',
   });
   return new Response(r.body, {
     status: r.status,
-    headers: cors(env, { 'Content-Type': r.headers.get('Content-Type') || 'application/json' }),
+    headers: cors(env, req, { 'Content-Type': 'application/json; charset=utf-8' }),
   });
 }
 
@@ -109,18 +126,27 @@ async function handleAis(req, env) {
 
 async function handleProxy(req, env, host, path, search) {
   if (!PROXY_ALLOW.has(host)) {
-    return new Response('host not allowed', { status: 403, headers: cors(env) });
+    return new Response('host not allowed', { status: 403, headers: cors(env, req) });
   }
   const upstream = `https://${host}/${path}${search}`;
   const r = await fetch(upstream, {
     method: req.method,
     headers: { 'User-Agent': 'canada-map-viz/1.0', 'Accept': 'application/json' },
     body: ['GET', 'HEAD'].includes(req.method) ? undefined : await req.arrayBuffer(),
-    redirect: 'follow',
+    // Never follow redirects: an allow-listed host returning 302 to an
+    // arbitrary URL would otherwise pivot the worker (SSRF).
+    redirect: 'manual',
   });
+  if (r.status >= 300 && r.status < 400) {
+    return new Response(JSON.stringify({ error: 'upstream redirect blocked' }),
+      { status: 502, headers: cors(env, req, { 'Content-Type': 'application/json' }) });
+  }
   return new Response(r.body, {
     status: r.status,
-    headers: cors(env, { 'Content-Type': r.headers.get('Content-Type') || 'application/json' }),
+    headers: cors(env, req, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+    }),
   });
 }
 
@@ -129,7 +155,7 @@ export default {
     const url = new URL(req.url);
 
     if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: cors(env) });
+      return new Response(null, { status: 204, headers: cors(env, req) });
     }
     if (!originAllowed(req, env)) {
       return new Response('origin not allowed', { status: 403 });
@@ -143,6 +169,6 @@ export default {
     if (head) return handleProxy(req, env, head, segs.join('/'), url.search);
 
     return new Response('canada-map-viz worker: /ais (ws), /gfw/events, /<host>/<path>',
-      { status: 200, headers: cors(env, { 'Content-Type': 'text/plain' }) });
+      { status: 200, headers: cors(env, req, { 'Content-Type': 'text/plain' }) });
   },
 };
