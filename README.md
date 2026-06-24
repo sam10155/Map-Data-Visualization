@@ -2,7 +2,7 @@
 
 An interactive, **fully client-side** visualization of Canadian industrial capacity and national infrastructure — facilities, power generation, pipelines, ports, weather, hydrology, land use, and live aircraft/vessel tracking — all on one Leaflet map.
 
-> **Live demo:** [https://sam10155.github.io/Map-Data-Visulization/](https://sam10155.github.io/Map-Data-Visulization/)
+> **Live demo:** [https://sam10155.github.io/Map-Data-Visualization/](https://sam10155.github.io/Map-Data-Visualization/)
 
 ![App Screenshot](docs/screenshot.png)
 
