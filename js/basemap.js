@@ -28,6 +28,8 @@
       label: 'Default',
       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       opts: { maxZoom: 19, minZoom: 3, attribution: '© OpenStreetMap contributors' },
+      // Dark UI swaps the light OSM tiles for CartoDB Dark Matter.
+      dark: CARTO_DARK,
     },
     satellite: {
       label: 'Satellite',
@@ -164,7 +166,15 @@
     localStorage.setItem('darkUI', darkUI ? '1' : '0');
     const cb = document.getElementById('darkModeToggle');
     if (cb) cb.checked = darkUI;
+    // Re-apply the basemap so tiles follow the theme (if it has a dark variant).
+    if (mapRef && resolveTiles(BASEMAPS[current]).url !== loadedTileUrl) setBasemap(current);
   }
+
+  function resolveTiles(def) {
+    return (darkUI && def.dark) ? def.dark : def;
+  }
+
+  let loadedTileUrl = null;
 
   function setBasemap(id) {
     if (!mapRef || !BASEMAPS[id]) return;
@@ -172,7 +182,9 @@
     if (baseOverlay) { mapRef.removeLayer(baseOverlay); baseOverlay = null; }
 
     const def = BASEMAPS[id];
-    baseLayer = L.tileLayer(def.url, def.opts).addTo(mapRef);
+    const tiles = resolveTiles(def);
+    loadedTileUrl = tiles.url;
+    baseLayer = L.tileLayer(tiles.url, tiles.opts).addTo(mapRef);
     baseLayer.setZIndex(0);
     if (def.overlay) {
       baseOverlay = L.tileLayer(def.overlay.url, def.overlay.opts).addTo(mapRef);

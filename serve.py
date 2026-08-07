@@ -46,6 +46,9 @@ PROXY_ALLOW = {
     'overpass.openstreetmap.fr',
     'api.open-meteo.com',
     'gateway.api.globalfishingwatch.org',
+    'aisuptime.buttermilkgreen.fyi',
+    'tsimobile.viarail.ca',
+    'cwfis.cfs.nrcan.gc.ca',
 }
 
 class Handler(SimpleHTTPRequestHandler):

@@ -23,6 +23,9 @@ const PROXY_ALLOW = new Set([
   'opendata.adsb.fi',
   'opensky-network.org',
   'api.adsbdb.com',
+  'aisuptime.buttermilkgreen.fyi',   // AISStream-Uptime health check
+  'tsimobile.viarail.ca',            // VIA Rail live train positions
+  'cwfis.cfs.nrcan.gc.ca',           // NRCan wildfire hotspots/active fires
 ]);
 
 function allowedOriginsList(env) {
@@ -80,6 +83,69 @@ async function handleGfw(req, env) {
   });
 }
 
+// Temporary diagnostic: GET /ais/diag connects to AISStream server-side
+// with the stored secret and reports what happens. Exposes only key length
+// + first 4 chars, never the key itself. Remove once the feed is stable.
+async function handleAisDiag(req, env) {
+  const key = env.AISSTREAM_API_KEY || '';
+  const info = {
+    keyConfigured: !!key,
+    keyLen: key.length,
+    keyPrefix: key.slice(0, 4),
+    keyHasWhitespace: /\s/.test(key),
+    frames: 0, firstFrame: null,
+    closed: false, closeCode: null, closeReason: null, error: null,
+  };
+  const respond = () => new Response(JSON.stringify(info, null, 2),
+    { headers: cors(env, req, { 'Content-Type': 'application/json' }) });
+  if (!key) return respond();
+
+  let up;
+  try {
+    up = await fetch('https://stream.aisstream.io/v0/stream', { headers: { Upgrade: 'websocket' } });
+  } catch (e) { info.error = `upstream fetch: ${e.message}`; return respond(); }
+  const ws = up.webSocket;
+  if (!ws) { info.error = `no upgrade (HTTP ${up.status})`; return respond(); }
+  ws.accept();
+
+  const dec = new TextDecoder();
+  info.frameLog = [];   // type + byte-length + preview of every frame
+  const done = new Promise((res) => {
+    ws.addEventListener('message', (ev) => {
+      info.frames++;
+      let type, len, preview;
+      try {
+        if (typeof ev.data === 'string') { type = 'text'; len = ev.data.length; preview = ev.data.slice(0, 100); }
+        else { const u8 = new Uint8Array(ev.data); type = 'binary'; len = u8.byteLength; preview = dec.decode(u8).slice(0, 100); }
+      } catch (e) { type = 'unknown'; len = -1; preview = `<${e.message}>`; }
+      if (info.frameLog.length < 8) info.frameLog.push({ type, len, preview });
+      if (!info.firstFrame && preview) info.firstFrame = preview;
+      if (info.frames >= 6) { try { ws.close(1000); } catch {} res(); }
+    });
+    ws.addEventListener('close', (ev) => {
+      info.closed = true; info.closeCode = ev.code; info.closeReason = ev.reason; res();
+    });
+    ws.addEventListener('error', (ev) => { info.error = `ws error${ev?.message ? ': ' + ev.message : ''}`; res(); });
+    setTimeout(res, 12000);
+  });
+  // Step 1: send deliberately INVALID JSON. If our frames reach AISStream,
+  // it must answer with an error message — proving the send path works.
+  ws.send('not json {{{');
+  // Step 2 (2s later): real subscription, whole-world bbox — guarantees
+  // traffic if the key is accepted.
+  setTimeout(() => {
+    try {
+      ws.send(JSON.stringify({
+        APIKey: key,
+        BoundingBoxes: [[[-90, -180], [90, 180]]],
+        FilterMessageTypes: ['PositionReport'],
+      }));
+    } catch {}
+  }, 2000);
+  await done;
+  return respond();
+}
+
 async function handleAis(req, env) {
   if (req.headers.get('Upgrade') !== 'websocket') {
     return new Response('expected websocket', { status: 426 });
@@ -91,13 +157,30 @@ async function handleAis(req, env) {
   const [client, server] = Object.values(new WebSocketPair());
   server.accept();
 
+  // close() only accepts code 1000 or 3000-4999 — anything else (e.g. a
+  // forwarded 1006 from an abnormal upstream drop) THROWS, killing the
+  // worker and surfacing to the client as a bare 1011. Sanitize + carry
+  // the original code in the reason text so the browser can display it.
+  function safeClose(sock, code, reason) {
+    const ok = code === 1000 || (code >= 3000 && code < 5000);
+    try {
+      sock.close(ok ? code : 4000, String(reason || '').slice(0, 120));
+    } catch { try { sock.close(1000); } catch {} }
+  }
+
   // Connect upstream. Cloudflare Workers fetch() supports WebSocket upgrade.
-  const up = await fetch('https://stream.aisstream.io/v0/stream', {
-    headers: { Upgrade: 'websocket' },
-  });
+  let up;
+  try {
+    up = await fetch('https://stream.aisstream.io/v0/stream', {
+      headers: { Upgrade: 'websocket' },
+    });
+  } catch (e) {
+    safeClose(server, 4000, `upstream fetch failed: ${e.message}`);
+    return new Response(null, { status: 101, webSocket: client });
+  }
   const upstream = up.webSocket;
   if (!upstream) {
-    server.close(1011, 'upstream ws failed');
+    safeClose(server, 4000, `upstream refused upgrade (HTTP ${up.status})`);
     return new Response(null, { status: 101, webSocket: client });
   }
   upstream.accept();
@@ -110,16 +193,29 @@ async function handleAis(req, env) {
       upstream.send(JSON.stringify(msg));
     } catch {
       // non-JSON (ping etc.) — forward as-is
-      upstream.send(ev.data);
+      try { upstream.send(ev.data); } catch {}
     }
   });
-  server.addEventListener('close', (ev) => upstream.close(ev.code, ev.reason));
-  server.addEventListener('error', () => upstream.close(1011));
+  server.addEventListener('close', (ev) => safeClose(upstream, ev.code, ev.reason));
+  server.addEventListener('error', () => safeClose(upstream, 4000, 'client socket error'));
 
-  // Upstream → client: forward verbatim.
-  upstream.addEventListener('message', (ev) => server.send(ev.data));
-  upstream.addEventListener('close', (ev) => server.close(ev.code, ev.reason));
-  upstream.addEventListener('error', () => server.close(1011));
+  // Upstream → client: AISStream sends binary frames; decode to text so
+  // the browser always receives strings (and never a stringified Blob).
+  // Workers' TextDecoder requires an ArrayBufferView — a raw ArrayBuffer
+  // throws — so wrap in Uint8Array.
+  const dec = new TextDecoder();
+  upstream.addEventListener('message', (ev) => {
+    try {
+      const text = typeof ev.data === 'string' ? ev.data : dec.decode(new Uint8Array(ev.data));
+      if (text) server.send(text);   // drop empty keepalive frames
+    } catch {
+      try { server.send(ev.data); } catch {}   // last resort: forward verbatim
+    }
+  });
+  upstream.addEventListener('close', (ev) =>
+    safeClose(server, ev.code, `upstream closed (${ev.code}${ev.reason ? ': ' + ev.reason : ''})`));
+  upstream.addEventListener('error', (ev) =>
+    safeClose(server, 4000, `upstream error${ev?.message ? ': ' + ev.message : ''}`));
 
   return new Response(null, { status: 101, webSocket: client });
 }
@@ -164,6 +260,15 @@ export default {
     const segs = url.pathname.replace(/^\/+/, '').split('/');
     const head = segs.shift() || '';
 
+    if (head === 'ais' && segs[0] === 'diag') return handleAisDiag(req, env);
+    // AISStream refuses to stream data to Cloudflare-egress connections
+    // (subscription accepted, zero data frames — verified via /ais/diag),
+    // so the WS relay is useless. Instead hand the key to allow-listed
+    // origins and let the browser connect to AISStream directly.
+    if (head === 'ais' && segs[0] === 'key') {
+      return new Response(JSON.stringify({ key: env.AISSTREAM_API_KEY || null }),
+        { headers: cors(env, req, { 'Content-Type': 'application/json' }) });
+    }
     if (head === 'ais') return handleAis(req, env);
     if (head === 'gfw' && segs[0] === 'events') return handleGfw(req, env);
     if (head) return handleProxy(req, env, head, segs.join('/'), url.search);

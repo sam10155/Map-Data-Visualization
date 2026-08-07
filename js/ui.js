@@ -7,7 +7,9 @@ function togglePanel() {
 function initializeFilters() {
   Object.values(markers).forEach(items => {
     const f = items[0].facility;
-    filters.datasets[f.dataset] = true;
+    // Datasets start unchecked — a fresh load shows a clean map and the
+    // user opts in to the facility layers they want.
+    filters.datasets[f.dataset] = false;
     filters.sectors[f.sector] = true;
     filters.subcategories[f.subcategory] = true;
   });
@@ -78,13 +80,14 @@ function buildMetricControls() {
 }
 
 function buildDatasetFilters() {
+  const allOn = Object.values(filters.datasets).every(v => v);
   let html = `<label class="checkbox-item" style="font-weight:600;">
-    <input type="checkbox" id="selectAll-datasets" checked onchange="toggleAll('datasets', this.checked)">
+    <input type="checkbox" id="selectAll-datasets" ${allOn ? 'checked' : ''} onchange="toggleAll('datasets', this.checked)">
     <span>Select All</span></label>`;
   Object.keys(filters.datasets).sort().forEach(d => {
     const escaped = d.replace(/'/g, "\\'");
     html += `<label class="checkbox-item">
-      <input type="checkbox" data-key="${d}" checked onchange="toggleDataset('${escaped}')">${d}</label>`;
+      <input type="checkbox" data-key="${d}" ${filters.datasets[d] ? 'checked' : ''} onchange="toggleDataset('${escaped}')">${d}</label>`;
   });
   document.getElementById('datasetFilters').innerHTML = html;
 }

@@ -1,0 +1,47 @@
+name: Update crude stocks
+
+on:
+  schedule:
+    # Twice monthly: StatCan releases table 25-10-0063 around the last
+    # business day of the month; the 1st catches it promptly and the
+    # 16th is the safety net if a release slips.
+    - cron: '0 12 1,16 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write   # to dispatch the Pages deploy after pushing data
+
+concurrency:
+  group: crude-stocks
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch monthly crude stocks (StatCan)
+        run: python3 scripts/fetch_crude_stocks.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add data/canada-crude-stocks.json
+          if git diff --cached --quiet; then
+            echo 'no change — skipping commit'
+          else
+            git commit -m "data: crude stocks $(date -u +'%Y-%m-%d')"
+            git push
+            echo 'pushed=1' >> "$GITHUB_ENV"
+          fi
+
+      # Pushes made with GITHUB_TOKEN don't trigger other workflows,
+      # so kick the Pages deploy explicitly.
+      - name: Trigger Pages deploy
+        if: env.pushed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref "${GITHUB_REF_NAME}"

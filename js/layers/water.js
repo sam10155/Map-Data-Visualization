@@ -32,7 +32,8 @@
   // from sweeping deep into the US.  West of the Lakehead the border is
   // 49°N; only the ON peninsula, QC and Maritimes dip lower.
   function southBoundAt(lon) {
-    if (lon < -95)  return 48.9;          // Prairies / BC: 49th parallel
+    if (lon < -123.3) return 48.2;        // Vancouver Island dips to ~48.3
+    if (lon < -95)  return 48.9;          // Prairies / mainland BC: 49th parallel
     if (lon < -88)  return 47.5;          // Lake Superior wedge
     if (lon < -83)  return 41.6;          // SW Ontario peninsula
     if (lon < -79)  return 41.6;          // Niagara / Erie shore
@@ -46,9 +47,25 @@
     return lon >= -141 && lon <= -52 && lat <= 83.2 && lat >= southBoundAt(lon);
   }
 
+  // Water-level classes are percentiles of each station's own history for
+  // the current month (levels use station-local datums, so raw metres are
+  // never comparable across stations).
+  const LEVEL_COLORS = {
+    'very-low': '#b91c1c', 'low': '#f59e0b', 'normal': '#22c55e',
+    'high': '#3b82f6', 'very-high': '#7c3aed',
+  };
+  const LEVEL_LABELS = {
+    'very-low': 'Very low (&lt;p05)', 'low': 'Low (&lt;p25)', 'normal': 'Normal',
+    'high': 'High (&gt;p75)', 'very-high': 'Very high (&gt;p95)',
+  };
+  const KIND_ICON = { river: '🏞', lake: '🌊', reservoir: '🪣', coastal: '⚓' };
+
   function legendHTML(basins) {
     const rows = basins.map(b =>
       `<div class="legend-item"><span class="color-dot" style="background:${b.color}"></span>${b.name}</div>`
+    ).join('');
+    const lvlRows = ['very-high', 'high', 'normal', 'low', 'very-low'].map(k =>
+      `<div class="legend-item"><span class="color-dot" style="background:${LEVEL_COLORS[k]}"></span>${LEVEL_LABELS[k]}</div>`
     ).join('');
     return `<div class="overlay-legend">
       <div class="overlay-legend-title">💧 Drainage Basins & Rivers</div>
@@ -56,6 +73,12 @@
       <div class="wx-row" style="margin-top:6px;">— line width ∝ √(mean discharge m³/s)</div>
       <div class="wx-row">Zoom ≥ ${OSM_ZOOM}: detailed rivers · ≥ ${STREAM_ZOOM}: tributary streams (OSM)</div>
       <div class="wx-row" id="water-osm-status" style="color:#9ca3af;"></div>
+      <div class="overlay-legend-title" style="margin-top:6px;" id="water-levels-legend">📏 Water Levels vs monthly norms</div>
+      ${lvlRows}
+      <div class="legend-item"><span class="color-dot" style="background:#9ca3af"></span>No historical baseline</div>
+      <div class="legend-item"><span class="color-dot" style="background:#6b7280;border:2px solid #eab308;"></span>Gold ring: reservoir w/ capacity est.</div>
+      <div class="wx-row" id="water-levels-status" style="color:#9ca3af;"></div>
+      <div class="wx-row">Data: ECCC · DFO-CHS · ORRPB (provisional)</div>
     </div>`;
   }
 
@@ -190,6 +213,152 @@
           setStatus(`${n.toLocaleString()} river segments (pre-baked)`);
         } catch (e) {
           console.info('[water] no pre-baked rivers — will use live Overpass at zoom ≥ ' + OSM_ZOOM, e.message);
+        }
+      }
+
+      // ---- water-level station markers (📏 sub-toggle) ----
+      const levelGroup = L.layerGroup();
+      let levelsLoaded = false;
+
+      function ageLabel(iso) {
+        if (!iso) return '';
+        const mins = Math.round((Date.now() - Date.parse(iso)) / 60000);
+        if (!isFinite(mins) || mins < 0) return '';
+        return mins < 90 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+      }
+
+      async function levelSparkline(id, container) {
+        try {
+          const url = 'https://api.weather.gc.ca/collections/hydrometric-realtime/items' +
+            `?f=json&STATION_NUMBER=${encodeURIComponent(id)}&sortby=-DATETIME&limit=288&properties=DATETIME,LEVEL`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const pts = (await res.json()).features
+            .map(f => [Date.parse(f.properties.DATETIME), f.properties.LEVEL])
+            .filter(p => p[1] != null)
+            .sort((a, b) => a[0] - b[0]);
+          if (pts.length < 2) { container.textContent = 'no recent level data'; return; }
+          const W = 220, H = 48, PAD = 3;
+          const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+          const x0 = Math.min(...xs), x1 = Math.max(...xs);
+          const y0 = Math.min(...ys), y1 = Math.max(...ys);
+          const sx = t => PAD + (W - 2*PAD) * (t - x0) / ((x1 - x0) || 1);
+          const sy = v => H - PAD - (H - 2*PAD) * (v - y0) / ((y1 - y0) || 1);
+          const d = pts.map((p, i) => `${i ? 'L' : 'M'}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join('');
+          container.innerHTML =
+            `<svg width="${W}" height="${H}" style="display:block;">` +
+            `<path d="${d}" fill="none" stroke="#3b82f6" stroke-width="1.5"/></svg>` +
+            `<div style="font-size:10px;color:#6b7280;">last 24 h · ${y0.toFixed(2)}–${y1.toFixed(2)} m</div>`;
+        } catch (e) {
+          container.textContent = `history unavailable (${e.message})`;
+        }
+      }
+
+      async function loadLevels() {
+        if (levelsLoaded) return;
+        levelsLoaded = true;
+        const setLvlStatus = msg => {
+          const el = document.getElementById('water-levels-status');
+          if (el) el.textContent = msg || '';
+        };
+        try {
+          const res = await fetch('data/canada-water-levels.geojson?v=' + (window.APP_VERSION || '1'));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const gj = await res.json();
+          (gj.features || []).forEach(f => {
+            const p = f.properties, [lon, lat] = f.geometry.coordinates;
+            // Reservoirs with a curated operating range are coloured by
+            // fill % (red=empty → blue=full); everything else by
+            // percentile class vs its own history.
+            let color = LEVEL_COLORS[p.class] || '#9ca3af';
+            if (p.fillPct != null) {
+              color = p.fillPct < 25 ? '#b91c1c' : p.fillPct < 50 ? '#f59e0b'
+                    : p.fillPct < 75 ? '#22c55e' : '#3b82f6';
+            }
+            const isLake = p.kind === 'lake' || p.kind === 'reservoir';
+            const hasCapacity = p.fillPct != null || p.capacityKm3 != null;
+            const mk = L.circleMarker([lat, lon], {
+              radius: p.fillPct != null ? 8 : isLake ? 6 : 4,
+              // gold outline = curated reservoir with capacity info
+              color: hasCapacity ? '#eab308' : '#ffffff',
+              weight: hasCapacity ? 2 : 1,
+              fillColor: color, fillOpacity: 0.92,
+              pane: 'markerPane',
+            });
+            let capBar = '';
+            if (p.fillPct != null) {
+              capBar = `<div style="margin:3px 0;">Est. capacity: <b>${p.fillPct}%</b>` +
+                (p.estStorageKm3 != null ? ` (~${p.estStorageKm3} of ${p.capacityKm3} km³)` : '') +
+                `<div style="width:140px;height:7px;background:#e5e7eb;border-radius:4px;overflow:hidden;">` +
+                `<div style="width:${p.fillPct}%;height:100%;background:${color};"></div></div>` +
+                `<span style="font-size:10px;color:#6b7280;">linear estimate of live-storage range</span></div>`;
+            } else if (p.resName && (p.capacityKm3 != null || p.fslM != null || p.resNote)) {
+              // matched reservoir but no computable fill % (missing min
+              // level or gauge on a different datum) — show static facts
+              capBar = `<div style="margin:3px 0;color:#6b7280;">` +
+                (p.capacityKm3 != null ? `Storage capacity: ${p.capacityKm3} km³` : '') +
+                (p.capacityKm3 != null && p.fslM != null ? ' · ' : '') +
+                (p.fslM != null ? `Full supply: ${p.fslM} m` : '') +
+                (p.resNote ? `<div style="font-size:10px;">${eh(p.resNote)}</div>` : '') +
+                `</div>`;
+            }
+            const lines = [
+              `<b>${KIND_ICON[p.kind] || ''} ${eh(p.resName || p.name || p.id)}</b>` +
+                (p.resOperator ? ` <span style="color:#6b7280;">· ${eh(p.resOperator)}</span>` : ''),
+              capBar || null,
+              p.level != null ? `Level: ${p.level.toLocaleString()} m${p.p50 != null && p.classBy === 'level' ? ` (median ${p.p50.toLocaleString()} m)` : ''}` : null,
+              p.discharge != null ? `Flow: ${p.discharge.toLocaleString()} m³/s` : null,
+              p.class ? `Status: <b style="color:${LEVEL_COLORS[p.class]}">${LEVEL_LABELS[p.class] || p.class}</b>` +
+                        (p.classBy === 'discharge' ? ' (by flow)' : '') :
+                        (p.fillPct == null ? 'Status: no baseline' : null),
+              ageLabel(p.time),
+            ].filter(Boolean);
+            mk.bindTooltip(lines.join('<br>'), { sticky: true });
+            if (p.src === 'eccc' || capBar) {
+              mk.on('click', () => {
+                const div = document.createElement('div');
+                div.innerHTML =
+                  `<b>${eh(p.resName || p.name || p.id)}</b>` +
+                  (p.resOperator ? `<div style="color:#6b7280;font-size:11px;">${eh(p.resOperator)}</div>` : '') +
+                  capBar +
+                  (p.level != null ? `<div>Level: ${p.level.toLocaleString()} m</div>` : '') +
+                  (p.src === 'eccc' ? `<div class="spark">loading 24 h history…</div>` : '');
+                mk.bindPopup(div, { minWidth: 230 }).openPopup();
+                const spark = div.querySelector('.spark');
+                if (spark) levelSparkline(p.id, spark);
+              });
+            }
+            mk.addTo(levelGroup);
+          });
+          const when = gj.generated ? new Date(gj.generated).toLocaleString() : '?';
+          const failed = (gj.sources_failed || []).length
+            ? ` · ${gj.sources_failed.join(',')} unavailable` : '';
+          setLvlStatus(`${(gj.features || []).length.toLocaleString()} stations · updated ${when}${failed}`);
+        } catch (e) {
+          levelsLoaded = false;
+          setLvlStatus(`water levels: ${e.message}`);
+          console.warn('[water] levels load failed', e);
+        }
+      }
+
+      // ---- sub-toggle state (Rivers / Water levels) ----
+      const visible = { rivers: true, levels: true };
+      function applyVisibility() {
+        if (!mapRef) return;
+        [coarseGroup, osmGroup].forEach(g => {
+          if (visible.rivers && !mapRef.hasLayer(g)) g.addTo(mapRef);
+          if (!visible.rivers && mapRef.hasLayer(g)) mapRef.removeLayer(g);
+        });
+        if (visible.rivers && mapRef.getZoom() >= STREAM_ZOOM) {
+          if (!mapRef.hasLayer(streamGroup)) streamGroup.addTo(mapRef);
+        } else if (mapRef.hasLayer(streamGroup)) {
+          mapRef.removeLayer(streamGroup);
+        }
+        if (visible.levels) {
+          if (!mapRef.hasLayer(levelGroup)) levelGroup.addTo(mapRef);
+          loadLevels();
+        } else if (mapRef.hasLayer(levelGroup)) {
+          mapRef.removeLayer(levelGroup);
         }
       }
 
@@ -371,34 +540,46 @@
 
       function refresh(m) {
         const z = m.getZoom();
-        if (z >= STREAM_ZOOM) {
+        if (visible.rivers && z >= STREAM_ZOOM) {
           if (!m.hasLayer(streamGroup)) streamGroup.addTo(m);
           loadStreamsForViewport(m);
         } else if (m.hasLayer(streamGroup)) {
           // keep loaded but hide at low zoom (too noisy)
           m.removeLayer(streamGroup);
         }
-        if (!staticRiversLoaded && z >= OSM_ZOOM) {
+        if (visible.rivers && !staticRiversLoaded && z >= OSM_ZOOM) {
           if (!m.hasLayer(osmGroup)) osmGroup.addTo(m);
           loadOsmForViewport(m);
         }
       }
 
       return {
+        controls() {
+          const wrap = document.createElement('div');
+          [['rivers', '🏞 Rivers'], ['levels', '📏 Water levels']].forEach(([k, label]) => {
+            const lab = document.createElement('label');
+            lab.className = 'mapmode-sub-item';
+            lab.innerHTML = `<input type="checkbox" ${visible[k] ? 'checked' : ''}> ${label}`;
+            lab.querySelector('input').onchange = e => { visible[k] = e.target.checked; applyVisibility(); };
+            wrap.appendChild(lab);
+          });
+          return wrap;
+        },
         mount(m) {
           mapRef = m;
           basinGroup.addTo(m);
-          coarseGroup.addTo(m);
-          osmGroup.addTo(m);
           legendCtl = L.control({ position: 'bottomleft' });
           legendCtl.onAdd = () => { const d = L.DomUtil.create('div'); d.innerHTML = legendHTML(data.basins); return d; };
           legendCtl.addTo(m);
+          applyVisibility();
           tryLoadStaticRivers().then(() => refresh(m));
         },
         unmount(m) {
-          [basinGroup, coarseGroup, osmGroup, streamGroup].forEach(g => { if (m.hasLayer(g)) m.removeLayer(g); });
+          [basinGroup, coarseGroup, osmGroup, streamGroup, levelGroup].forEach(g => { if (m.hasLayer(g)) m.removeLayer(g); });
           osmGroup.clearLayers();
           streamGroup.clearLayers();
+          levelGroup.clearLayers();
+          levelsLoaded = false;
           Object.keys(cellCache).forEach(k => delete cellCache[k]);
           Object.keys(streamCache).forEach(k => delete streamCache[k]);
           if (legendCtl) { m.removeControl(legendCtl); legendCtl = null; }

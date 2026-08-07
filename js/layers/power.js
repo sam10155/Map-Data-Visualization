@@ -128,12 +128,20 @@
       // ---- transmission lines + pulses ----
       data.interties.forEach(t => {
         const cls = kvClass(t.kv);
-        const dash = t.type === 'DC' ? '8,6' : null;
+        const st = normalizeStatus(t.status);
+        const built = st === 'Active';
+        // DC lines dash long; unbuilt (UC/Proposed) lines dash short + fade
+        const dash = !built ? '3,5' : (t.type === 'DC' ? '8,6' : null);
         L.polyline(t.path, {
-          color: cls.color, weight: cls.weight, opacity: 0.9, dashArray: dash, interactive: true
+          color: cls.color, weight: cls.weight, opacity: built ? 0.9 : 0.45,
+          dashArray: dash, interactive: true
         })
-        .bindTooltip(`<b>${eh(t.name)}</b><br>${t.kv} kV ${eh(t.type)}${t.op ? ' · ' + eh(t.op) : ''}`, { sticky: true })
+        .bindTooltip(`<b>${eh(t.name)}</b><br>${t.kv} kV ${eh(t.type)}` +
+                     `${t.op ? ' · ' + eh(t.op) : ''}${built ? '' : '<br>' + st}`,
+                     { sticky: true })
         .addTo(lineGroup);
+
+        if (!built) return;   // no electron pulse on lines that don't exist yet
 
         const pulse = buildPulse(t.path, cls.color);
         pulse.marker.addTo(pulseGroup);
@@ -152,18 +160,39 @@
         raf = requestAnimationFrame(tick);
       }
 
+      // ---- sub-toggle state (Power lines / Generation) ----
+      const visible = { lines: true, plants: true };
+      function applyVisibility() {
+        if (!mapRef) return;
+        [lineGroup, pulseGroup].forEach(g => {
+          if (visible.lines && !mapRef.hasLayer(g)) g.addTo(mapRef);
+          if (!visible.lines && mapRef.hasLayer(g)) mapRef.removeLayer(g);
+        });
+        // pause the pulse animation when lines are hidden
+        if (visible.lines && !raf) raf = requestAnimationFrame(tick);
+        if (!visible.lines && raf) { cancelAnimationFrame(raf); raf = null; }
+        if (visible.plants && !mapRef.hasLayer(iconGroup)) iconGroup.addTo(mapRef);
+        if (!visible.plants && mapRef.hasLayer(iconGroup)) mapRef.removeLayer(iconGroup);
+      }
+
       return {
+        controls() {
+          const wrap = document.createElement('div');
+          [['lines', '🔌 Power lines'], ['plants', '🏭 Generation']].forEach(([k, label]) => {
+            const lab = document.createElement('label');
+            lab.className = 'mapmode-sub-item';
+            lab.innerHTML = `<input type="checkbox" ${visible[k] ? 'checked' : ''}> ${label}`;
+            lab.querySelector('input').onchange = e => { visible[k] = e.target.checked; applyVisibility(); };
+            wrap.appendChild(lab);
+          });
+          return wrap;
+        },
         mount(m) {
           mapRef = m;
-          lineGroup.addTo(m);
-          pulseGroup.addTo(m);
-          iconGroup.addTo(m);
-
           legendCtl = L.control({ position: 'bottomleft' });
           legendCtl.onAdd = () => { const d = L.DomUtil.create('div'); d.innerHTML = legendHTML(); return d; };
           legendCtl.addTo(m);
-
-          raf = requestAnimationFrame(tick);
+          applyVisibility();
         },
         unmount(m) {
           if (raf) { cancelAnimationFrame(raf); raf = null; }

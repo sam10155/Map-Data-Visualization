@@ -1,0 +1,45 @@
+name: Update water levels
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write   # to dispatch the Pages deploy after pushing data
+
+concurrency:
+  group: water-levels
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch current water levels
+        run: python3 scripts/fetch_water_levels.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add data/canada-water-levels.geojson
+          if git diff --cached --quiet; then
+            echo 'no change — skipping commit'
+          else
+            git commit -m "data: water levels $(date -u +'%Y-%m-%d %H:%MZ')"
+            git push
+            echo 'pushed=1' >> "$GITHUB_ENV"
+          fi
+
+      # Pushes made with GITHUB_TOKEN don't trigger other workflows,
+      # so kick the Pages deploy explicitly.
+      - name: Trigger Pages deploy
+        if: env.pushed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref "${GITHUB_REF_NAME}"
+

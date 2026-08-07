@@ -59,8 +59,76 @@
       <div class="overlay-legend-title">🛢️ Pipelines</div>
       ${rows}
       <div class="wx-row" style="margin-top:6px;">line width ∝ √(capacity)</div>
-      <div class="wx-row">⚪ pulse = flow direction · dashed = idle</div>
+      <div class="wx-row">⚪ pulse = flow direction · dashed = idle / not built</div>
+      <div class="legend-item" style="margin-top:4px;"><span class="color-dot" style="background:#374151;border:2px solid #eab308;"></span>Storage hub (shell capacity)</div>
+      <div class="wx-row" id="pipe-stocks-status" style="color:#9ca3af;"></div>
     </div>`;
+  }
+
+  // ---- crude storage hubs -------------------------------------------------
+  // Tank-farm shell capacities aggregated by city from the facility data.
+  // No free hub-level utilization feed exists (commercial satellite-tracker
+  // territory), so hubs show verified shell capacity; the provincial
+  // monthly StatCan "held by transporters" gauge gives regional context.
+  const HUB_MIN_BBL = 3e6;   // only major hubs get a marker
+
+  function buildHubs() {
+    const all = window.canadaIndustrialData?.all || [];
+    const byCity = {};
+    all.forEach(f => {
+      if (f.subcategory !== 'Crude Tank Farm' || !f.capacity) return;
+      if (normalizeStatus(f.status) !== 'Active') return;
+      const key = `${f.city}|${f.province}`;
+      const h = byCity[key] || (byCity[key] = {
+        city: f.city, prov: f.province, bbl: 0, lat: 0, lon: 0, ops: [] });
+      h.bbl += f.capacity;
+      h.lat += f.lat * f.capacity;   // capacity-weighted centroid
+      h.lon += f.lon * f.capacity;
+      h.ops.push({ name: f.name, op: f.operator, bbl: f.capacity, notes: f.notes });
+    });
+    return Object.values(byCity)
+      .filter(h => h.bbl >= HUB_MIN_BBL)
+      .map(h => ({ ...h, lat: h.lat / h.bbl, lon: h.lon / h.bbl,
+                   ops: h.ops.sort((a, b) => b.bbl - a.bbl) }));
+  }
+
+  function fmtMbbl(bbl) { return (bbl / 1e6).toFixed(1) + ' Mbbl'; }
+
+  async function loadStocks() {
+    try {
+      const res = await fetch('data/canada-crude-stocks.json?v=' + (window.APP_VERSION || '1'));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      console.info('[pipelines] no crude-stocks data:', e.message);
+      return null;
+    }
+  }
+
+  function hubPopupHTML(h, stocks) {
+    const rows = h.ops.map(o =>
+      `<tr><td style="padding-right:8px;">${eh(o.op || '')}</td>` +
+      `<td style="text-align:right;">${fmtMbbl(o.bbl)}</td></tr>`).join('');
+    const reg = stocks?.regions?.[h.prov];
+    let gauge = '';
+    if (reg) {
+      const pct = reg.pctOfRange;
+      const color = pct == null ? '#9ca3af' : pct < 25 ? '#22c55e' : pct < 75 ? '#f59e0b' : '#b91c1c';
+      gauge = `<div style="margin-top:6px;border-top:1px solid #e5e7eb;padding-top:4px;">` +
+        `<b>${eh(h.prov)}</b> crude in pipelines &amp; tank farms (${eh(reg.month)}): ` +
+        `<b>${fmtMbbl(reg.bbl)}</b>` +
+        (pct != null
+          ? `<div style="width:170px;height:7px;background:#e5e7eb;border-radius:4px;overflow:hidden;">` +
+            `<div style="width:${pct}%;height:100%;background:${color};"></div></div>` +
+            `<span style="font-size:10px;color:#6b7280;">${pct}% of 5-yr range ` +
+            `(${fmtMbbl(reg.min5y)}–${fmtMbbl(reg.max5y)}) · StatCan 25-10-0063, provincial</span>`
+          : '') + `</div>`;
+    }
+    return `<b>🛢 ${eh(h.city)} storage hub</b>` +
+      `<div>Total shell capacity: <b>${fmtMbbl(h.bbl)}</b></div>` +
+      `<table style="font-size:11px;margin-top:3px;">${rows}</table>` +
+      `<div style="font-size:10px;color:#6b7280;margin-top:3px;">Shell capacity ≠ current fill — no public per-hub fill data exists.</div>` +
+      gauge;
   }
 
   MapModes.register({
@@ -73,9 +141,35 @@
 
       const lineGroup  = L.layerGroup();
       const pulseGroup = L.layerGroup();
+      const hubGroup   = L.layerGroup();
       const pulses = [];
       let legendCtl = null;
       let raf = null;
+
+      // ---- storage-hub markers (gold ring, same convention as the water
+      //      layer's capacity reservoirs) ----
+      loadStocks().then(stocks => {
+        const hubs = buildHubs();
+        hubs.forEach(h => {
+          L.circleMarker([h.lat, h.lon], {
+            radius: Math.max(7, Math.min(13, 3.5 * Math.sqrt(h.bbl / 1e6))),
+            color: '#eab308', weight: 2,
+            fillColor: '#374151', fillOpacity: 0.9,
+          })
+          .bindTooltip(`<b>🛢 ${eh(h.city)}</b><br>${fmtMbbl(h.bbl)} shell capacity · ` +
+                       `${h.ops.length} terminal${h.ops.length > 1 ? 's' : ''}<br>click for breakdown`,
+                       { sticky: true })
+          .bindPopup(hubPopupHTML(h, stocks), { minWidth: 260 })
+          .addTo(hubGroup);
+        });
+        const el = document.getElementById('pipe-stocks-status');
+        if (el) {
+          const ca = stocks?.regions?.CA;
+          el.textContent = ca
+            ? `CA transporter stocks ${(ca.bbl/1e6).toFixed(0)} Mbbl (${ca.month}) · ${ca.pctOfRange}% of 5-yr range`
+            : 'crude-stocks data unavailable';
+        }
+      });
 
       data.pipelines.forEach(p => {
         const c = COMMODITY[p.commodity] || COMMODITY.crude;
@@ -116,6 +210,7 @@
         mount(m) {
           lineGroup.addTo(m);
           pulseGroup.addTo(m);
+          hubGroup.addTo(m);
           legendCtl = L.control({ position: 'bottomleft' });
           legendCtl.onAdd = () => { const d = L.DomUtil.create('div'); d.innerHTML = legendHTML(); return d; };
           legendCtl.addTo(m);
@@ -123,7 +218,7 @@
         },
         unmount(m) {
           if (raf) { cancelAnimationFrame(raf); raf = null; }
-          [lineGroup, pulseGroup].forEach(g => { if (m.hasLayer(g)) m.removeLayer(g); });
+          [lineGroup, pulseGroup, hubGroup].forEach(g => { if (m.hasLayer(g)) m.removeLayer(g); });
           if (legendCtl) { m.removeControl(legendCtl); legendCtl = null; }
         }
       };

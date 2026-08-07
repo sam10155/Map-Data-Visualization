@@ -100,12 +100,20 @@ async function loadData() {
   }
 
   const power = powerPlantsAsFacilities();
+  // Bulk registry imports (NPRI / NRCan 900A / provincial mills) — own
+  // dataset so they're toggleable separately from the curated records.
+  const registry = (window.CANADA_REGISTRY_FACILITIES || []).map(r => ({
+    ...r,
+    operator: r.operator || '',
+    dataset: 'Registry (auto)',
+  }));
   if (window.canadaIndustrialData) {
     window.canadaIndustrialData.power = power;
-    window.canadaIndustrialData.all = [...base, ...power];
+    window.canadaIndustrialData.registry = registry;
+    window.canadaIndustrialData.all = [...base, ...power, ...registry];
   }
 
-  const facilities = [...base, ...power];
+  const facilities = [...base, ...power, ...registry];
 
   if (window._attributeCache) {
     Object.values(window._attributeCache).forEach(attr => {
@@ -326,7 +334,9 @@ function guessNearestCity(lat, lon) {
 function calculateRadius(f) {
   const scales = {
     'bbl': 1e-5, 'm3': 0.01, 'Bcf': 1.0, 'tonnes': 2e-4, 'TEU/yr': 1e-4,
-    'bbl/d': 0.003, 'MMcf/d': 0.12, 'MTPA': 150, 'kMT/yr': 0.2, 'MW': 0.3
+    'bbl/d': 0.003, 'MMcf/d': 0.12, 'MTPA': 150, 'kMT/yr': 0.2, 'MW': 0.3,
+    // registry-import units (mill capacities)
+    'm³ wood/yr': 2e-5, 'MMfbm/yr': 0.25, 'kBDU/yr': 0.15, 'kt/yr': 0.2
   };
 
   const val = Math.max(0, Number(f.capacity) || 0);
@@ -334,10 +344,14 @@ function calculateRadius(f) {
 
   const base = Math.sqrt(val * scale) + 4;
 
-  const zoom = map.getZoom ? map.getZoom() : 4;  
-  const zoomFactor = 1 + (zoom - 4) * 0.15; 
+  const zoom = map.getZoom ? map.getZoom() : 4;
+  const zoomFactor = 1 + (zoom - 4) * 0.15;
 
-  const radius = Math.max(6, Math.min(base * zoomFactor, 40));
+  // capacity-less bulk-registry points render small and steady so the
+  // capacity-scaled curated facilities remain the visual signal
+  const min = (!val && f.dataset === 'Registry (auto)') ? 4 : 6;
+
+  const radius = Math.max(min, Math.min(base * zoomFactor, 40));
 
   return radius;
 }

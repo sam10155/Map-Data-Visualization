@@ -41,11 +41,33 @@ def post(query, tries=4):
     raise last
 
 
+# Stepped Canada–US boundary — same approximation as js/layers/water.js
+# and scripts/trim_us_rivers.py; keep in sync.
+def south_bound(lon):
+    if lon < -123.3: return 48.2   # Vancouver Island
+    if lon < -95:  return 48.9
+    if lon < -88:  return 47.5
+    if lon < -83:  return 41.6
+    if lon < -79:  return 41.6
+    if lon < -74:  return 43.5
+    if lon < -71:  return 44.9
+    if lon < -67:  return 44.5
+    if lon < -59:  return 43.3
+    return 46.5
+
+
+def in_canada(lat, lon):
+    return -141 <= lon <= -52 and south_bound(lon) <= lat <= 83.2
+
+
 def way_to_feature(el):
     if el.get('type') != 'way' or not el.get('geometry'):
         return None
     coords = [[g['lon'], g['lat']] for g in el['geometry']]
     if len(coords) < 2:
+        return None
+    mid = coords[len(coords) // 2]
+    if not in_canada(mid[1], mid[0]):
         return None
     return {
         'type': 'Feature',

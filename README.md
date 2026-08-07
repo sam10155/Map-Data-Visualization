@@ -18,7 +18,7 @@ An interactive, **fully client-side** visualization of Canadian industrial capac
 | **Oil & Gas Processing** | ~97 | Refineries, upgraders, petrochemical plants, gas plants, NGL fractionators, LNG liquefaction, renewable-fuel projects |
 | **Raw Materials** | ~219 | Steel mills, aluminum smelters, base-metal smelters/refineries, gold/diamond/uranium mills, pulp & paper, sawmills, cement/lime/salt/potash |
 | **Agricultural Processing** | ~221 | Canola/soy crush, fertilizer plants, ethanol, meat/poultry, dairy, flour/sugar, beverages, seafood |
-| **Power Generation** | ~556 | Hydro, nuclear, gas, coal, wind, solar, battery, biomass — plus **212 transmission lines / interties** |
+| **Power Generation** | ~556 | Hydro, nuclear, gas, coal, wind, solar, battery, biomass — plus **221 transmission lines / interties** (CER/operator-verified 2026-08; incl. under-construction & proposed, rendered dashed) |
 
 Every facility carries `status` (Active / Idle / Closed / Under Construction / Proposed) and most carry a `notes` field with verification commentary. All records have been multi-agent fact-checked for operator, location, capacity and operating status; see [`REVIEW_REPORT.md`](REVIEW_REPORT.md) for the full audit trail.
 
@@ -27,11 +27,12 @@ Every facility carries `status` (Active / Idle / Closed / Under Construction / P
 | Layer | Source | Notes |
 |---|---|---|
 | 🌦️ **Weather** | [Open-Meteo](https://open-meteo.com) | Temperature grid, wind arrows, precipitation, ⚡ thunderstorms. Sub-toggles per variable; **↻ Fit view** refits the grid to your zoom level. National grid on mount, zero API calls on pan/zoom. |
-| 💧 **Water Systems** | NRCan + OpenStreetMap | Ocean drainage basins (colour-coded), **158k pre-baked river segments**, mean-discharge-scaled line widths, tributary streams at zoom ≥ 10. |
+| 💧 **Water Systems** | StatCan drainage regions + OSM + ECCC/DFO/ORRPB/HQ/QC | Official drainage-basin polygons (incl. separate Island-of-Newfoundland section), **54k Canada-clipped river segments**, and a **Water levels** sub-layer: ~2,900 live station markers classified very-low→very-high against per-station HYDAT monthly percentile bands, 36 major reservoirs with estimated **capacity/fill %** (gold ring), coastal tide gauges, 24-h level sparkline on click. Refreshed every 6 h by GitHub Action. |
+| 🔥 **Wildfires** | [NRCan CWFIS](https://cwfis.cfs.nrcan.gc.ca) + ECCC FireWork | Live active-fire markers (status-coloured, area-scaled), last-24 h satellite hotspots, **💨 surface-PM2.5 smoke forecast** (GeoMet WMS, current hour), optional fire-danger raster. Fetched client-side, refreshes hourly — no pre-baked data. |
 | ⚓ **Ports & Airports** | curated | ~50 seaports + inland ports, ~60 airports (intl + regional). |
 | 🌾 **Land Use** | [AAFC Annual Crop Inventory](https://agriculture.canada.ca/imagery-images/rest/services/annual_crop_inventory/) + NRCan Land Cover | 30 m, 75 crop classes (wheat/canola/corn/soy/lentils/potatoes/…). **Click anywhere** to identify the exact crop class. Radio-toggle to NRCan land-cover; opacity slider. |
-| ⚡ **Power Generation** | curated + audit | Type-glyph badges over the editable facility circles, plus voltage-class-coloured transmission lines with **animated electron pulses**. |
-| 🛢️ **Pipelines** | curated | Major crude / refined / NGL / natural-gas pipelines; commodity-coloured, capacity-scaled, animated flow direction. |
+| ⚡ **Power Generation** | curated + audit | Sub-toggles for **🔌 Power lines / 🏭 Generation**. Type-glyph badges over the editable facility circles, plus voltage-class-coloured transmission lines with **animated electron pulses**; unbuilt lines dashed. |
+| 🛢️ **Pipelines** | curated (CER-checked) + StatCan | 50 crude/products/NGL/gas pipelines incl. under-construction LNG feeders; commodity-coloured, capacity-scaled, animated flow. **Storage-hub markers** (gold ring) aggregate tank-farm shell capacity per hub (Hardisty ~33 Mbbl…) with a monthly provincial StatCan crude-stocks gauge. |
 | 📡 **Live Tracking** | airplanes.live · adsb.lol · adsb.fi · adsbdb · AISStream · GFW | ✈ Aircraft with **5 type-shaped icons** (GA / narrowbody / widebody / helicopter / military) and **dep→arr route** in tooltip. 🚢 AIS vessels (needs free key). 🐟 Fishing vessels via Global Fishing Watch (needs free token). Each independently toggleable. |
 
 ---
@@ -62,15 +63,21 @@ Map-Data-Visulization/
 │   ├── constants.js  tableview.js  mapmodes.js
 │   └── layers/
 │       ├── weather.js  water.js  transport.js  landuse.js
-│       ├── power.js  pipelines.js  tracking.js
+│       ├── power.js  pipelines.js  tracking.js  rail.js  wildfire.js
 ├── data/
 │   ├── canada-data.js            # 862 industrial facilities (status/notes)
-│   ├── canada-power.js           # 556 plants + 212 transmission lines
-│   ├── canada-pipelines.js
+│   ├── canada-power.js           # 566 plants + 221 transmission lines
+│   ├── canada-pipelines.js       # 50 pipelines (CER-checked 2026-08)
 │   ├── canada-ports-airports.js
-│   ├── canada-water-basins.js    # basin polygons + named-river backbone + discharges
-│   ├── canada-rivers.geojson     # 158k pre-baked OSM river segments (~27 MB)
-│   ├── canada-basins.geojson     # placeholder for accurate NRCan drainage polygons
+│   ├── canada-water-basins.js    # simplified basin fallback + named-river backbone
+│   ├── canada-basins.geojson     # official StatCan drainage regions (1.2 MB)
+│   ├── canada-boundary.geojson   # Natural Earth 50m Canada polygon (for clipping)
+│   ├── canada-rivers.geojson     # 54k Canada-clipped OSM river segments (~11 MB)
+│   ├── canada-rail.geojson       # pre-baked OSM rail corridors
+│   ├── canada-water-levels.geojson  # live station levels — updated 6-hourly by Action
+│   ├── canada-water-normals.json # HYDAT per-station monthly percentile bands
+│   ├── canada-reservoirs.json    # curated reservoir constants (FSL/min/capacity)
+│   ├── canada-crude-stocks.json  # StatCan provincial crude stocks — twice-monthly Action
 │   └── config.js                 # generated from .env (API keys) — gitignored
 ├── scripts/
 │   ├── gen_config.py             # .env → data/config.js
@@ -78,11 +85,19 @@ Map-Data-Visulization/
 │   ├── append_gaps.py            # merge gap-analysis additions
 │   ├── merge_power.py            # merge power-audit results
 │   ├── fetch_rivers.py           # bake OSM rivers → canada-rivers.geojson
-│   ├── fetch_basins.py           # fetch NRCan drainage areas (when endpoint live)
+│   ├── trim_us_rivers.py         # polygon-clip rivers to Canada boundary
+│   ├── fetch_basins.py           # fetch StatCan drainage regions → canada-basins.geojson
+│   ├── fetch_rail.py             # bake OSM rail → canada-rail.geojson
+│   ├── bake_water_normals.py     # HYDAT sqlite → percentile bands (quarterly)
+│   ├── fetch_water_levels.py     # ECCC+DFO+ORRPB+HQ+QC+AB → water-levels geojson
+│   ├── fetch_crude_stocks.py     # StatCan WDS → provincial crude stocks
 │   ├── merge_edits.py            # apply downloaded user-edit JSON to source data
 │   └── cloudflare-worker.js      # optional CORS proxy for GitHub Pages
 ├── serve.py                      # local dev server with /proxy/ passthrough
-├── .github/workflows/deploy.yml  # GitHub Pages deploy (injects secrets)
+├── .github/workflows/
+│   ├── deploy.yml                # GitHub Pages deploy (injects secrets)
+│   ├── water-levels.yml          # cron 0 */6: fetch levels, commit, redeploy
+│   └── crude-stocks.yml          # cron 1st+16th: StatCan stocks, commit, redeploy
 ├── REVIEW_REPORT.md              # full data-verification audit
 └── README.md
 ```
@@ -111,11 +126,47 @@ Open **http://localhost:8081/**.
 
 `serve.py` adds a `/proxy/<host>/<path>` passthrough so aircraft feeds work even when upstream rate-limit responses lack CORS headers. The simpler `python3 -m http.server` also works but without the proxy.
 
+### 🔑 Setting API keys from the browser console
+
+Instead of the `.env` + `gen_config.py` route, you can set keys directly in the browser. Open the site, press <kbd>F12</kbd> → **Console**, paste the command for the service you have a key for, then reload the page. Keys persist in that browser via `localStorage` (per-site, so run them while on the map page).
+
+**AISStream** — 🚢 live vessel positions (free key from [aisstream.io](https://aisstream.io)):
+
+```js
+localStorage.setItem('aisstream_key', 'YOUR_AISSTREAM_KEY')
+```
+
+**Global Fishing Watch** — 🐟 fishing-vessel events (free token from [globalfishingwatch.org/our-apis](https://globalfishingwatch.org/our-apis)):
+
+```js
+localStorage.setItem('gfw_token', 'YOUR_GFW_JWT_TOKEN')
+```
+
+The legend's `AIS API` health line polls the public [AISStream-Uptime](https://github.com/buttermilkgreen/AISStream-Uptime) service ([aisuptime.buttermilkgreen.fyi](https://aisuptime.buttermilkgreen.fyi)) automatically — no key or setup needed.
+
+To verify what's currently set, or to remove a key:
+
+```js
+localStorage.getItem('aisstream_key')       // shows the stored key (null if unset)
+localStorage.removeItem('aisstream_key')    // forget it
+localStorage.removeItem('gfw_token')
+```
+
+Notes:
+- Reload the page after setting or removing a key — they're read once on layer mount.
+- AISStream allows **one concurrent connection per key**: a second tab (or anything else using the key) silently starves the first.
+- Keys set this way stay on your machine, but they're plain text in DevTools → Application → Local Storage. Both services' keys are free and instantly rotatable, so treat leakage as an inconvenience, not an incident.
+- Aircraft tracking needs **no key** — it uses open ADS-B feeds.
+
 ### Regenerating data
 
 | Task | Command |
 |---|---|
-| Re-bake river geometry from OSM | `python3 scripts/fetch_rivers.py` (~30 min) |
+| Re-bake river geometry from OSM | `python3 scripts/fetch_rivers.py` (~30 min) then `python3 scripts/trim_us_rivers.py` (~3 min) |
+| Refresh drainage-basin polygons | `python3 scripts/fetch_basins.py` |
+| Re-bake HYDAT water-level normals (quarterly) | `python3 scripts/bake_water_normals.py` (downloads ~266 MB) |
+| Fetch current water levels manually | `python3 scripts/fetch_water_levels.py` |
+| Fetch StatCan crude stocks manually | `python3 scripts/fetch_crude_stocks.py` |
 | Refresh `data/config.js` from `.env` | `python3 scripts/gen_config.py` |
 | Apply a downloaded edits JSON | `python3 scripts/merge_edits.py edits.json` |
 
@@ -184,6 +235,9 @@ Power plants follow the same shape with `sector:'Power Generation'`, `subcategor
 | adsbdb.com | flight dep/arr route lookup | ✅ |
 | AISStream.io | live AIS vessel positions | ✅ (WebSocket) — free key |
 | Global Fishing Watch v3 | recent fishing-vessel events | ✅ — free token |
+| ECCC MSC GeoMet (`api.weather.gc.ca`) | hydrometric station history (click sparklines) | ✅ |
+| NRCan CWFIS (`cwfis.cfs.nrcan.gc.ca` + `geoserver.cwfif.nrcan.gc.ca`) | live wildfires, hotspots, fire-danger WMS | ✅ |
+| ECCC GeoMet (`geo.weather.gc.ca`) | FireWork smoke-plume PM2.5 WMS | ✅ (image tiles) |
 
 ---
 
@@ -194,15 +248,6 @@ Power plants follow the same shape with `sector:'Power Generation'`, `subcategor
 - **Persistence:** File System Access API (OPFS) for local edits
 - **Server:** `serve.py` (Python stdlib, `ThreadingHTTPServer`) — static + allow-listed CORS proxy
 - **Hosting:** GitHub Pages via Actions
-
----
-
-## 🚧 Roadmap
-
-- [ ] Accurate NRCan ocean-drainage-area polygons (`data/canada-basins.geojson`) once a stable public endpoint is found
-- [x] Census-of-Agriculture livestock-density choropleth (cattle/pigs/sheep/poultry by census division) — under 🌾 Land Use
-- [x] Dark / satellite / night basemap toggle + 🌙 dark-UI mode — top of Layer Controls
-- [ ] Backend database + collaborative editing
 
 ---
 

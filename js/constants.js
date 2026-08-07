@@ -47,6 +47,8 @@ const SECTOR_COLORS = {
   'Metals': '#6b7280',
   'Forest': '#8b4513',
   'Minerals': '#7c3aed',
+  'Mining': '#44403c',
+  'Chemicals': '#0d9488',
   'Power Generation': '#f59e0b'
 };
 

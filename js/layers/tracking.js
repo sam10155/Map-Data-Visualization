@@ -1,5 +1,10 @@
 /**
- * Live aircraft + ship tracking overlay.
+ * Live aircraft + ship + VIA Rail train tracking overlay.
+ *
+ * Trains: tsimobile.viarail.ca/data/allData.json — all active VIA trains
+ *   with position/speed/heading/schedule. No CORS upstream, so requires
+ *   the proxy (serve.py locally, Cloudflare Worker on Pages). Freight
+ *   (CN/CPKC) positions are not public — no feed exists.
  *
  * Aircraft:
  *   • Primary:  adsb.lol (https://api.adsb.lol/) — CORS-open, no key.
@@ -11,6 +16,13 @@
  * Ships: AISStream.io WebSocket (free key required).
  *   Filter: AIS Destination matches a Canadian port name/UN-LOCODE.
  *   Set window.AISSTREAM_API_KEY or localStorage 'aisstream_key' to enable.
+ *   NOTE: AISStream sends *binary* WebSocket frames — in a browser ev.data
+ *   is a Blob/ArrayBuffer, not a string, and must be decoded before parsing.
+ *
+ * AIS API health: polled from the public AISStream-Uptime service
+ *   (github.com/buttermilkgreen/AISStream-Uptime) so the legend can tell
+ *   "AISStream is down for everyone" apart from "your key/connection is
+ *   broken".
  *
  * Both feeds report status into the legend so the user can see why a
  * sub-layer is empty.
@@ -18,7 +30,54 @@
 
 (function () {
   const CANADA_BBOX = { lamin: 41.5, lamax: 83.2, lomin: -141.0, lomax: -52.5 };
-  const AIRCRAFT_POLL_MS = 15000;
+
+  // Piecewise southern boundary approximating the Canada–US border, so we
+  // don't subscribe to / draw traffic deep in Washington, New York, etc.
+  // [westLon, minLat]: the min latitude applies from that longitude east
+  // until the next entry. Border-hugging US cities (Detroit, Bellingham)
+  // remain inside — the steps only cut areas well south of the border.
+  const S_BOUNDARY = [
+    [-141.0, 48.2],  // AK panhandle → Juan de Fuca Strait / Victoria
+    [-123.3, 48.9],  // 49th parallel: BC interior → Lake of the Woods
+    [-95.2, 48.0],   // Lake of the Woods → Lake Superior
+    [-89.0, 46.0],   // Lake Superior → Sault Ste. Marie
+    [-84.5, 42.9],   // Lake Huron shore → Sarnia
+    [-83.2, 41.6],   // Windsor / Lake Erie / Pelee Island
+    [-78.9, 43.2],   // Niagara → Lake Ontario
+    [-76.5, 44.0],   // Thousand Islands / upper St. Lawrence
+    [-74.5, 44.8],   // 45th parallel (QC / NY / VT / ME)
+    [-67.8, 44.4],   // Bay of Fundy / Grand Manan
+    [-66.5, 43.3],   // Nova Scotia south shore → Atlantic
+  ];
+
+  function minLatAt(lon) {
+    let m = S_BOUNDARY[0][1];
+    for (const [w, lat] of S_BOUNDARY) { if (lon >= w) m = lat; else break; }
+    return m;
+  }
+  function inTrackingArea(lat, lon) {
+    return lat <= CANADA_BBOX.lamax &&
+           lon >= CANADA_BBOX.lomin && lon <= CANADA_BBOX.lomax &&
+           lat >= minLatAt(lon);
+  }
+  // One [SW, NE] box per boundary band (AISStream / GeoJSON builders below).
+  function boundaryBands() {
+    return S_BOUNDARY.map(([w, lat], i) => {
+      const e = i + 1 < S_BOUNDARY.length ? S_BOUNDARY[i + 1][0] : CANADA_BBOX.lomax;
+      return { w, e, lat };
+    });
+  }
+  // Stepped GeoJSON polygon of the tracking area (lon,lat order) for GFW.
+  function trackingAreaPolygon() {
+    const ring = [];
+    boundaryBands().forEach(b => ring.push([b.w, b.lat], [b.e, b.lat]));
+    ring.push([CANADA_BBOX.lomax, CANADA_BBOX.lamax], [CANADA_BBOX.lomin, CANADA_BBOX.lamax]);
+    ring.push(ring[0]);
+    return { type: 'Polygon', coordinates: [ring] };
+  }
+  // 32 tiles × ~1.1s gap (airplanes.live allows ~1 req/s) ≈ 40-50s per
+  // sweep, so poll at 60s. The busy-guard in pollPlanes prevents overlap.
+  const AIRCRAFT_POLL_MS = 60000;
 
   // Optional proxy (e.g. a Cloudflare Worker) for GitHub-Pages deployments.
   // If set, requests go to `${TRACKING_PROXY}<host>/<path>`. Configure via
@@ -34,18 +93,50 @@
     return p.replace(/\/?$/, '/');
   })();
 
-  // 250 nm circles — six covers the populated corridor; the north has so
-  // little traffic that omitting it costs ~nothing and avoids rate-limits.
+  // 250 nm (~463 km) circles tiling the whole country, coast to coast to
+  // coast — verified to cover every community from Windsor to Alert.
+  // Traffic in the north is sparse but polar routes cross it constantly.
   const ADSB_CENTRES = [
+    // southern corridor
     [49.3,-123.1],   // Vancouver / Pacific NW
     [51.1,-114.0],   // Calgary / Edmonton corridor
     [50.4,-104.6],   // Regina / SK-MB
     [49.9,-97.1],    // Winnipeg / NW ON
     [43.7,-79.6],    // GTA / SW ON
-    [45.5,-73.6],    // Montréal / QC / Maritimes reach
+    [45.5,-73.6],    // Montréal / QC
+    // east
+    [46.5,-64.0],    // Moncton / Maritimes
+    [48.4,-71.1],    // Saguenay / central QC
+    [50.2,-66.4],    // Sept-Îles / North Shore
+    [47.6,-52.7],    // St. John's / Newfoundland
+    [53.3,-60.4],    // Goose Bay / Labrador
+    // mid-north
+    [48.4,-89.2],    // Thunder Bay / NW ON
+    [50.0,-81.0],    // Timmins / James Bay
+    [55.3,-77.8],    // Kuujjuarapik / E Hudson Bay
+    [58.1,-68.4],    // Kuujjuaq / Nunavik
+    [58.8,-94.2],    // Churchill / Thompson
+    [55.1,-105.3],   // La Ronge / N SK
+    [56.7,-111.4],   // Fort McMurray
+    [53.9,-122.8],   // Prince George
+    [54.4,-129.5],   // Terrace / Prince Rupert / BC coast
+    [57.5,-122.5],   // Fort St. John / Fort Nelson
+    // territories & Arctic
+    [60.7,-135.1],   // Whitehorse / Yukon
+    [64.1,-139.4],   // Dawson / Old Crow
+    [68.4,-133.5],   // Inuvik / Beaufort
+    [72.0,-125.0],   // Banks Island / W Arctic
+    [62.5,-114.4],   // Yellowknife
+    [64.3,-96.0],    // Baker Lake / Kivalliq
+    [69.1,-105.1],   // Cambridge Bay / Kitikmeot
+    [63.7,-68.5],    // Iqaluit / S Baffin
+    [72.7,-78.0],    // Pond Inlet / N Baffin
+    [74.7,-95.0],    // Resolute
+    [81.2,-74.0],    // Eureka / Alert / high Arctic
   ];
   const ADSB_RADIUS_NM = 250;
-  const TILE_GAP_MS = 250;
+  const TILE_GAP_MS = 1100;        // airplanes.live rate limit is ~1 req/s
+  const FEED_COOLDOWN_MS = 5 * 60000;  // skip a feed for 5 min after it fails a sweep
 
   function buildLookups() {
     const data = window.CANADA_TRANSPORT || { ports: [], airports: [] };
@@ -95,8 +186,7 @@
     if (a.lat == null || a.lon == null) return null;
     const id = (a.hex || a.icao || '').toLowerCase();
     if (!id) return null;
-    if (a.lat < CANADA_BBOX.lamin || a.lat > CANADA_BBOX.lamax ||
-        a.lon < CANADA_BBOX.lomin || a.lon > CANADA_BBOX.lomax) return null;
+    if (!inTrackingArea(a.lat, a.lon)) return null;
     if (a.alt_baro === 'ground') return null;
     return {
       id, callsign: (a.flight || '').trim(), reg: a.r,
@@ -147,21 +237,8 @@
         };
       }
     }
-    // adsb.lol fallback
-    {
-      const j = await qfetch(buildUrl('api.adsb.lol', `api/0/route/${encodeURIComponent(cs)}`));
-      if (!j) return null;
-      const codes = (j._airport_codes_iata || j.airport_codes || '').split(/[-\s>]+/).filter(Boolean);
-      const aps = j._airports || [];
-      if (codes.length >= 2) {
-        return {
-          from: codes[0], to: codes[codes.length - 1],
-          fromName: aps[0] ? `${aps[0].location || ''} (${aps[0].name || ''})` : '',
-          toName: aps[aps.length-1] ? `${aps[aps.length-1].location || ''} (${aps[aps.length-1].name || ''})` : '',
-          airline: j.airline_code || '',
-        };
-      }
-    }
+    // (No adsb.lol route fallback: that endpoint answers with a 302, which
+    // browsers block on CORS and both proxies block as an SSRF guard.)
     return null;
   }
 
@@ -183,42 +260,55 @@
     await Promise.allSettled(workers);
   }
 
-  async function fetchTiledFeed(host, pathFn, label) {
+  async function fetchTiledFeed(host, pathFn, label, onProgress) {
     const seen = {};
-    let okCount = 0, lastErr = null;
+    let okCount = 0, lastErr = null, consecFails = 0, i = 0;
     for (const [la, lo] of ADSB_CENTRES) {
+      i++;
       try {
         const json = await tfetch(buildUrl(host, pathFn(la, lo)));
         okCount++;
+        consecFails = 0;
         (json.ac || json.aircraft || []).forEach(a => {
           const n = normalizeAc(a);
           if (n && !seen[n.id]) seen[n.id] = n;
         });
-      } catch (e) { lastErr = e; }
+      } catch (e) {
+        lastErr = e;
+        // 3 straight failures = the source is down or rate-limiting us;
+        // abort the sweep instead of burning 30 more doomed requests.
+        if (++consecFails >= 3) break;
+      }
+      onProgress?.(i, ADSB_CENTRES.length, Object.keys(seen).length);
       await sleep(TILE_GAP_MS);
     }
     if (okCount === 0) throw new Error(`${label}: ${lastErr?.message || 'unreachable'}`);
     return Object.values(seen);
   }
 
-  const fetchAirplanesLive = () => fetchTiledFeed(
-    'api.airplanes.live', (la,lo) => `v2/point/${la}/${lo}/${ADSB_RADIUS_NM}`, 'airplanes.live');
-  const fetchAdsbLol = () => fetchTiledFeed(
-    'api.adsb.lol', (la,lo) => `v2/point/${la}/${lo}/${ADSB_RADIUS_NM}`, 'adsb.lol');
-  const fetchAdsbFi = () => fetchTiledFeed(
-    'opendata.adsb.fi', (la,lo) => `api/v2/lat/${la}/lon/${lo}/dist/${ADSB_RADIUS_NM}`, 'adsb.fi');
+  const fetchAirplanesLive = (p) => fetchTiledFeed(
+    'api.airplanes.live', (la,lo) => `v2/point/${la}/${lo}/${ADSB_RADIUS_NM}`, 'airplanes.live', p);
+  const fetchAdsbLol = (p) => fetchTiledFeed(
+    'api.adsb.lol', (la,lo) => `v2/point/${la}/${lo}/${ADSB_RADIUS_NM}`, 'adsb.lol', p);
+  const fetchAdsbFi = (p) => fetchTiledFeed(
+    'opendata.adsb.fi', (la,lo) => `api/v2/lat/${la}/lon/${lo}/dist/${ADSB_RADIUS_NM}`, 'adsb.fi', p);
 
   async function fetchOpenSky() {
     const url = buildUrl('opensky-network.org',
       `api/states/all?lamin=${CANADA_BBOX.lamin}&lamax=${CANADA_BBOX.lamax}&lomin=${CANADA_BBOX.lomin}&lomax=${CANADA_BBOX.lomax}`);
     const json = await tfetch(url, 10000);
-    return (json.states || []).filter(s => s[5] != null && s[6] != null && !s[8]).map(s => ({
+    return (json.states || [])
+      .filter(s => s[5] != null && s[6] != null && !s[8] && inTrackingArea(s[6], s[5]))
+      .map(s => ({
       id: s[0], callsign: (s[1] || '').trim(), reg: null,
       lat: s[6], lon: s[5], alt: s[13] ?? s[7],
       gs: (s[9] || 0) * 1.94384, track: s[10],
       type: null, opIcao: s[2],
     }));
   }
+
+  const feedCooldown = {};   // label → timestamp until which the feed is skipped
+  let updateLegendRef = null;  // set by the mode instance so sweeps can report progress
 
   async function fetchAircraft(status) {
     const sources = [
@@ -229,16 +319,21 @@
     ];
     const errs = [];
     for (const [label, fn] of sources) {
+      if ((feedCooldown[label] || 0) > Date.now()) continue;
       try {
-        const list = await fn();
+        const list = await fn((done, total, found) => {
+          status.air = `${label} · scanning ${done}/${total} tiles · ${found} aircraft`;
+          updateLegendRef?.();
+        });
         status.air = `${label} · ${list.length} aircraft`;
         return list;
       } catch (e) {
+        feedCooldown[label] = Date.now() + FEED_COOLDOWN_MS;
         errs.push(`${label}: ${e.message || e}`);
-        console.warn(`[tracking] ${label} failed`, e);
+        console.warn(`[tracking] ${label} failed — cooling down 5 min`, e);
       }
     }
-    status.air = `feed error — ${errs.join(' · ')}`;
+    status.air = errs.length ? `feed error — ${errs.join(' · ')}` : status.air;
     return [];
   }
 
@@ -302,8 +397,56 @@
     });
   }
 
-  function shipIcon(heading, matched) {
-    const fill = matched ? '#0e7490' : '#94a3b8';
+  // AIS ship-type code (ShipStaticData.Type) → colour.
+  // https://api.vtexplorer.com/docs/ref-aistypes.html
+  const SHIP_TYPE_COLORS = [
+    { test: t => t >= 60 && t <= 69,             color: '#2563eb', label: 'Ferry / passenger' },
+    { test: t => t >= 70 && t <= 79,             color: '#16a34a', label: 'Cargo / bulk' },
+    { test: t => t >= 80 && t <= 89,             color: '#dc2626', label: 'Tanker (oil/gas/chem)' },
+    { test: t => t === 36 || t === 37,           color: '#ec4899', label: 'Pleasure craft' },
+    { test: t => t === 31 || t === 32 || t === 52, color: '#eab308', label: 'Tug / towing' },
+    { test: t => t === 35 || t === 51 || t === 55, color: '#0f172a', label: 'Navy / SAR / law' },
+  ];
+  const SHIP_OTHER = { color: '#94a3b8', label: 'Other / unknown' };
+
+  function shipClass(type, name) {
+    const t = Number(type);
+    if (Number.isFinite(t) && t > 0) {
+      const c = SHIP_TYPE_COLORS.find(c => c.test(t));
+      if (c) return c;
+    }
+    // No usable type code (static data not yet received, or type 0) —
+    // fall back on the vessel name for the unmistakable cases.
+    const n = (name || '').toUpperCase();
+    if (/FERRY|SPIRIT OF|QUEEN OF|COASTAL (CELEBRATION|INSPIRATION|RENAISSANCE)|SEASPAN \w+ FERRY/.test(n))
+      return SHIP_TYPE_COLORS[0];                       // ferry / passenger
+    if (/\bTUG\b|TUGBOAT/.test(n)) return SHIP_TYPE_COLORS[4];  // tug
+    if (/^(CCGS|HMCS|NCSM)\b/.test(n)) return SHIP_TYPE_COLORS[5]; // coast guard / navy
+    return SHIP_OTHER;
+  }
+
+  // MMSI → {t: typeCode, n: name} cache persisted across reloads: static
+  // data only broadcasts every ~6 min, so without this every visit starts
+  // with a sea of grey ships.
+  const SHIP_TYPE_CACHE_KEY = 'ais_type_cache_v1';
+  const shipTypeCache = (() => {
+    try { return JSON.parse(localStorage.getItem(SHIP_TYPE_CACHE_KEY)) || {}; }
+    catch { return {}; }
+  })();
+  let typeCacheDirty = false;
+  setInterval(() => {
+    if (!typeCacheDirty) return;
+    typeCacheDirty = false;
+    try {
+      const keys = Object.keys(shipTypeCache);
+      // cap ~4000 entries to stay well under localStorage quotas
+      if (keys.length > 4000) keys.slice(0, keys.length - 4000).forEach(k => delete shipTypeCache[k]);
+      localStorage.setItem(SHIP_TYPE_CACHE_KEY, JSON.stringify(shipTypeCache));
+    } catch {}
+  }, 30000);
+
+  function shipIcon(heading, type, name) {
+    const fill = shipClass(type, name).color;
     return L.divIcon({
       className: 'track-ship',
       html: `<svg width="20" height="20" viewBox="-10 -10 20 20">
@@ -314,14 +457,53 @@
     });
   }
 
+  // ---- AISStream API health (AISStream-Uptime monitor) ---------------------
+  // Polls the public AISStream-Uptime service
+  // (github.com/buttermilkgreen/AISStream-Uptime) for the upstream service
+  // state: Up / Silent Failure / Auth Error / Down. CORS-open, no key needed.
+  const AIS_UPTIME_BASE = 'https://aisuptime.buttermilkgreen.fyi';
+  const AIS_UPTIME_POLL_MS = 60000;
+
+  const AIS_API_STATE = {
+    'Up':             { icon: '🟢', hint: 'AISStream API up' },
+    'Silent Failure': { icon: '🟡', hint: 'AISStream connected but silent (upstream issue)' },
+    'Auth Error':     { icon: '🟠', hint: 'monitor reports auth errors upstream' },
+    'Down':           { icon: '🔴', hint: 'AISStream API down' },
+  };
+
+  async function fetchAisApiStatus() {
+    // Via the proxy when configured — some networks/edges mangle the direct
+    // call; the worker/serve.py fetch it server-side instead.
+    const url = PROXY
+      ? buildUrl('aisuptime.buttermilkgreen.fyi', 'api/v1/status?simple=true')
+      : `${AIS_UPTIME_BASE}/api/v1/status?simple=true`;
+    const j = await qfetch(url, 8000);
+    if (!j || !j.state) return null;
+    return {
+      state: j.state,
+      lastMessage: j.lastMessageReceived ? new Date(j.lastMessageReceived) : null,
+      ...(AIS_API_STATE[j.state] || { icon: '⚪', hint: j.state }),
+    };
+  }
+
   // When TRACKING_PROXY points at a deployed Cloudflare Worker (https://…),
   // the worker holds the keys and the browser never sees them.
   function proxyIsWorker() {
     return typeof PROXY === 'string' && /^https?:\/\//i.test(PROXY);
   }
+  // The browser always connects to AISStream directly: relaying the stream
+  // through a Cloudflare Worker doesn't work (AISStream accepts the
+  // subscription but never sends data to Workers-egress connections).
+  // In worker mode the key is fetched from the worker's /ais/key instead.
   function aisWsUrl() {
-    if (proxyIsWorker()) return PROXY.replace(/^http/i, 'ws').replace(/\/?$/, '/') + 'ais';
     return 'wss://stream.aisstream.io/v0/stream';
+  }
+  let workerAisKey = null;
+  async function fetchWorkerAisKey() {
+    if (workerAisKey) return workerAisKey;
+    const j = await qfetch(PROXY.replace(/\/?$/, '/') + 'ais/key', 8000);
+    workerAisKey = j?.key || null;
+    return workerAisKey;
   }
   function gfwUrl(qs) {
     if (proxyIsWorker()) return PROXY.replace(/\/?$/, '/') + 'gfw/events' + qs;
@@ -351,16 +533,7 @@
       datasets: ['public-global-fishing-events:latest'],
       startDate: fmt(start),
       endDate: fmt(end),
-      geometry: {
-        type: 'Polygon',
-        coordinates: [[
-          [CANADA_BBOX.lomin, CANADA_BBOX.lamin],
-          [CANADA_BBOX.lomax, CANADA_BBOX.lamin],
-          [CANADA_BBOX.lomax, CANADA_BBOX.lamax],
-          [CANADA_BBOX.lomin, CANADA_BBOX.lamax],
-          [CANADA_BBOX.lomin, CANADA_BBOX.lamin],
-        ]],
-      },
+      geometry: trackingAreaPolygon(),
     };
     const headers = { 'Content-Type': 'application/json' };
     if (!proxyIsWorker()) headers.Authorization = `Bearer ${token}`;
@@ -383,6 +556,57 @@
     })).filter(v => v.lat != null && v.lon != null);
   }
 
+  // ---- VIA Rail trains ------------------------------------------------------
+  // tsimobile.viarail.ca/data/allData.json — every active VIA train keyed by
+  // "trainNo (MM-DD)". No CORS headers, so it must go through the proxy.
+  const TRAIN_POLL_MS = 30000;
+
+  async function fetchViaTrains() {
+    if (!PROXY) throw new Error('VIA feed needs the proxy (no CORS upstream)');
+    const j = await tfetch(buildUrl('tsimobile.viarail.ca', 'data/allData.json'), 10000);
+    const out = [];
+    for (const [id, t] of Object.entries(j || {})) {
+      if (t.lat == null || t.lng == null || t.arrived) continue;
+      const next = (t.times || []).find(s => s.eta && s.eta !== 'ARR');
+      out.push({
+        id,
+        no: id.split(' ')[0],
+        lat: t.lat, lon: t.lng,
+        speed: t.speed, dir: t.direction,
+        from: t.from, to: t.to,
+        next: next ? {
+          station: next.station,
+          eta: next.arrival?.estimated || next.estimated,
+          lateMin: next.diffMin,
+        } : null,
+      });
+    }
+    return out;
+  }
+
+  function trainIcon(dir) {
+    // Top-down train pointing "up", rotated to heading: locomotive with an
+    // angled nose + windshield, coupler gap, then a trailing coach.
+    return L.divIcon({
+      className: 'track-train',
+      html: `<svg width="26" height="26" viewBox="-13 -13 26 26">
+        <g transform="rotate(${dir || 0})">
+          <!-- locomotive -->
+          <path d="M-3,-11 L-1.6,-13.2 Q0,-14 1.6,-13.2 L3,-11 L3,-1 L-3,-1 Z"
+                fill="#ffcc00" stroke="#1f2937" stroke-width="1"/>
+          <path d="M-1.9,-11.4 L0,-12.4 L1.9,-11.4 L1.9,-9.6 L-1.9,-9.6 Z" fill="#1f2937"/>
+          <rect x="-2.1" y="-8.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
+          <!-- trailing coach -->
+          <rect x="-3" y="0.6" width="6" height="11.5" rx="1.4"
+                fill="#ffcc00" stroke="#1f2937" stroke-width="1"/>
+          <rect x="-2.1" y="2.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
+          <rect x="-2.1" y="5.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
+          <rect x="-2.1" y="8.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
+        </g></svg>`,
+      iconSize: [26, 26], iconAnchor: [13, 13]
+    });
+  }
+
   function fishIcon() {
     return L.divIcon({
       className: 'track-ship',
@@ -403,40 +627,81 @@
       const planeGroup = L.layerGroup();
       const shipGroup = L.layerGroup();
       const fishGroup = L.layerGroup();
+      const trainGroup = L.layerGroup();
       const planeMarkers = {};
       const shipMarkers = {};
+      const trainMarkers = {};
       let pollTimer = null;
       let fishTimer = null;
+      let trainTimer = null;
+      let apiTimer = null;
       let ws = null;
+      let wsRetry = 0;
+      let wsRetryTimer = null;
+      let unmounted = false;
       let legendCtl = null;
       let mapRef = null;
       const lookups = buildLookups();
-      const visible = { planes: true, ships: true, fishing: true };
+      const visible = { planes: true, ships: true, trains: true, fishing: true };
       const status = {
         air: 'connecting…',
         ship: getAisKey() ? 'connecting…' : 'no key',
         fish: getGfwToken() ? 'loading…' : 'set GFW_API_TOKEN to enable',
+        train: PROXY ? 'loading…' : 'needs proxy (TRACKING_PROXY)',
+        api: null,   // AISStream-Uptime monitor result (null until first poll)
       };
 
       function applyVisibility() {
         if (!mapRef) return;
-        [['planes', planeGroup], ['ships', shipGroup], ['fishing', fishGroup]].forEach(([k, g]) => {
+        [['planes', planeGroup], ['ships', shipGroup], ['trains', trainGroup], ['fishing', fishGroup]].forEach(([k, g]) => {
           if (visible[k]) { if (!mapRef.hasLayer(g)) g.addTo(mapRef); }
           else if (mapRef.hasLayer(g)) mapRef.removeLayer(g);
         });
       }
 
+      // Canadian airports: ICAO CYxx/CZxx, IATA Yxx (both letter systems
+      // are reserved for Canada).
+      function isCdnAirport(code) {
+        if (!code) return false;
+        const c = String(code).toUpperCase();
+        return c.length === 4 ? /^C[YZ]/.test(c) : /^Y/.test(c);
+      }
       function isCdnFlight(a) {
         if (isCanadianReg(a.reg)) return true;
         if (a.id && /^c[0-3]/i.test(a.id)) return true;     // ICAO24 C00000–C3FFFF = Canada
         if (a.opIcao === 'Canada') return true;
+        // Route known and it departs/arrives in Canada
+        const r = a.callsign ? ROUTE_CACHE.get(a.callsign) : null;
+        if (r && (isCdnAirport(r.from) || isCdnAirport(r.to))) return true;
         return false;
       }
 
       function updateLegend() {
         const el = document.getElementById('tracking-status');
-        if (el) el.innerHTML =
-          `✈ ${eh(status.air)}<br>🚢 ${eh(status.ship)}<br>🐟 ${eh(status.fish)}`;
+        if (!el) return;
+        const api = status.api
+          ? `${status.api.icon} AIS API: ${eh(status.api.state)}` +
+            (status.api.lastMessage
+              ? ` <span style="font-size:10px;color:#9ca3af;">(msg ${eh(agoStr(status.api.lastMessage))})</span>` : '')
+          : '⚪ AIS API: checking…';
+        el.innerHTML =
+          `✈ ${eh(status.air)}<br>🚢 ${eh(status.ship)}<br>${api}<br>🚆 ${eh(status.train)}<br>🐟 ${eh(status.fish)}`;
+      }
+
+      function agoStr(d) {
+        const s = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+        if (s < 90) return `${s}s ago`;
+        if (s < 5400) return `${Math.round(s / 60)}m ago`;
+        return `${Math.round(s / 3600)}h ago`;
+      }
+
+      async function pollAisApi() {
+        const r = await fetchAisApiStatus();
+        // Keep the last good reading through a transient fetch failure;
+        // only show "unreachable" if we've never gotten one.
+        if (r) status.api = r;
+        else if (!status.api) status.api = { state: 'monitor unreachable', icon: '⚪', hint: 'uptime monitor unreachable', lastMessage: null };
+        updateLegend();
       }
 
       async function loadFishing() {
@@ -465,6 +730,51 @@
         }
       }
 
+      function trainTooltip(t) {
+        const late = t.next?.lateMin;
+        const lateHtml = late == null ? ''
+          : late <= 5 ? ` <span style="color:#16a34a;">on time</span>`
+          : ` <span style="color:#dc2626;">+${Math.round(late)} min</span>`;
+        return `<b>🚆 VIA ${eh(t.no)}</b><br>` +
+          `${eh(t.from || '?')} → ${eh(t.to || '?')}<br>` +
+          (t.next ? `Next: ${eh(t.next.station)}` +
+            (t.next.eta ? ` ${new Date(t.next.eta).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}` : '') +
+            lateHtml + '<br>' : '') +
+          `${Math.round(t.speed || 0)} km/h`;
+      }
+
+      async function pollTrains() {
+        if (!PROXY) { updateLegend(); return; }
+        let list;
+        try { list = await fetchViaTrains(); }
+        catch (e) {
+          status.train = `VIA feed error — ${e.message || e}`;
+          updateLegend();
+          return;
+        }
+        const seen = new Set();
+        list.forEach(t => {
+          seen.add(t.id);
+          let m = trainMarkers[t.id];
+          if (!m) {
+            m = trainMarkers[t.id] = L.marker([t.lat, t.lon], { icon: trainIcon(t.dir), keyboard: false });
+            m.addTo(trainGroup);
+          } else {
+            m.setLatLng([t.lat, t.lon]);
+            m.setIcon(trainIcon(t.dir));
+          }
+          m.bindTooltip(trainTooltip(t), { direction: 'top', offset: [0, -8] });
+        });
+        Object.keys(trainMarkers).forEach(id => {
+          if (!seen.has(id)) {
+            if (trainGroup.hasLayer(trainMarkers[id])) trainGroup.removeLayer(trainMarkers[id]);
+            delete trainMarkers[id];
+          }
+        });
+        status.train = `VIA · ${list.length} trains`;
+        updateLegend();
+      }
+
       function planeTooltip(a, cdn) {
         const route = a.callsign ? ROUTE_CACHE.get(a.callsign) : undefined;
         let routeHtml = '';
@@ -486,7 +796,15 @@
           `${Math.round(a.gs || 0)} kt · hdg ${Math.round(a.track || 0)}°`;
       }
 
+      let planePollBusy = false;
       async function pollPlanes() {
+        if (planePollBusy) return;   // a slow tile sweep can outlast the interval
+        planePollBusy = true;
+        try { await pollPlanesInner(); }
+        finally { planePollBusy = false; }
+      }
+
+      async function pollPlanesInner() {
         const list = await fetchAircraft(status);
         updateLegend();
         if (!list.length) return;   // keep existing markers on failed poll
@@ -500,6 +818,21 @@
           let m = planeMarkers[a.id];
           if (!m) {
             m = L.marker([a.lat, a.lon], { icon: planeIcon(a, cdn), keyboard: false });
+            // Hover with no cached route → look it up immediately rather
+            // than waiting for this plane's turn in the batched backlog.
+            m.on('tooltipopen', () => {
+              const ac = m._a;
+              if (!ac?.callsign || ROUTE_CACHE.has(ac.callsign)) return;
+              if (!looksLikeAirlineCallsign(ac.callsign)) return;
+              lookupRouteOne(ac.callsign)
+                .then(r => { ROUTE_CACHE.set(ac.callsign, r); })
+                .catch(() => { ROUTE_CACHE.set(ac.callsign, null); })
+                .then(() => {
+                  const cdn = isCdnFlight(ac);
+                  if (cdn !== m._cdn) { m._cdn = cdn; m.setIcon(planeIcon(ac, cdn)); }
+                  m.setTooltipContent(planeTooltip(ac, m._cdn));
+                });
+            });
             planeMarkers[a.id] = m;
           } else {
             m.setLatLng([a.lat, a.lon]);
@@ -526,13 +859,36 @@
         if (needRoute.length) {
           await fetchRoutes(needRoute.slice(0, 40));
           Object.values(planeMarkers).forEach(m => {
-            if (m._a) m.setTooltipContent(planeTooltip(m._a, m._cdn));
+            if (!m._a) return;
+            // Route data can change the Canadian determination — re-evaluate
+            // and recolor, don't just refresh the tooltip text.
+            const cdn = isCdnFlight(m._a);
+            if (cdn !== m._cdn) { m._cdn = cdn; m.setIcon(planeIcon(m._a, cdn)); }
+            m.setTooltipContent(planeTooltip(m._a, m._cdn));
           });
         }
       }
 
-      function startShips() {
-        const key = getAisKey();
+      function scheduleShipReconnect() {
+        if (unmounted || wsRetryTimer) return;
+        const delay = Math.min(60000, 2000 * 2 ** wsRetry++);
+        status.ship += ` · retrying in ${Math.round(delay / 1000)}s`;
+        updateLegend();
+        wsRetryTimer = setTimeout(() => { wsRetryTimer = null; startShips().catch(() => {}); }, delay);
+      }
+
+      async function startShips() {
+        let key = getAisKey();
+        if (proxyIsWorker()) {
+          status.ship = 'fetching key…'; updateLegend();
+          key = await fetchWorkerAisKey();
+          if (unmounted) return;
+          if (!key) {
+            status.ship = 'worker has no AISSTREAM_API_KEY configured';
+            updateLegend();
+            return;
+          }
+        }
         if (!key) {
           status.ship = 'set localStorage aisstream_key to enable';
           updateLegend();
@@ -540,44 +896,93 @@
         }
         try { ws = new WebSocket(aisWsUrl()); }
         catch (e) { status.ship = `WS error: ${e.message}`; updateLegend(); return; }
+        // AISStream sends binary frames; default binaryType 'blob' would need
+        // an async read per message — arraybuffer decodes synchronously.
+        ws.binaryType = 'arraybuffer';
+        const decoder = new TextDecoder();
 
-        let connectedAt = 0;
         ws.onopen = () => {
-          connectedAt = Date.now();
+          wsRetry = 0;
           status.ship = 'connected · waiting for data…'; updateLegend();
           const sub = {
-            BoundingBoxes: [[[CANADA_BBOX.lamin, CANADA_BBOX.lomin], [CANADA_BBOX.lamax, CANADA_BBOX.lomax]]],
-            FilterMessageTypes: ['PositionReport', 'ShipStaticData'],
+            // One box per southern-boundary band — keeps Puget Sound, the
+            // US Great Lakes shore and the US Atlantic coast out of the feed.
+            BoundingBoxes: boundaryBands().map(b =>
+              [[b.lat, b.w], [CANADA_BBOX.lamax, b.e]]),
+            // Class A position+static AND Class B (small vessels — many
+            // ferries, tugs, pleasure craft only transmit Class B).
+            FilterMessageTypes: ['PositionReport', 'ShipStaticData',
+              'StandardClassBPositionReport', 'ExtendedClassBPositionReport',
+              'StaticDataReport'],
+            APIKey: key,   // always direct-to-AISStream now
           };
-          if (!proxyIsWorker()) sub.APIKey = key;  // worker injects it server-side
           ws.send(JSON.stringify(sub));
-          // If no messages arrive within 15s, surface a hint (1-connection
-          // limit, key not yet activated, or service outage).
+          // If no messages arrive within 15s, use the uptime monitor to tell
+          // an AISStream outage apart from a local key/connection problem.
           setTimeout(() => {
             if (rawCount === 0 && ws && ws.readyState === 1) {
-              status.ship = 'connected · 0 msgs — likely AISStream outage (check github.com/aisstream/issues)';
+              status.ship = (status.api && status.api.state !== 'Up')
+                ? `connected · 0 msgs — ${status.api.hint}`
+                : 'connected · 0 msgs — key not activated, or 1-connection limit hit';
               updateLegend();
             }
           }, 15000);
         };
         ws.onerror = () => { status.ship = 'WS error'; updateLegend(); };
         ws.onclose = (ev) => {
-          status.ship = `disconnected (${ev.code})`;
-          updateLegend(); ws = null;
+          ws = null;
+          if (unmounted) return;
+          // AISStream closes ~4s in when the key is bad; don't hammer it.
+          if (rawCount === 0 && (ev.code === 1008 || /key/i.test(ev.reason || ''))) {
+            status.ship = `rejected (${ev.code}${ev.reason ? ': ' + ev.reason : ''}) — check API key`;
+            updateLegend();
+            return;
+          }
+          // 4000 = worker-relayed upstream failure; reason says what happened.
+          status.ship = ev.code === 4000 && ev.reason
+            ? `disconnected — ${ev.reason}`
+            : `disconnected (${ev.code})`;
+          scheduleShipReconnect();
         };
 
-        let rawCount = 0, plotted = 0, logged = 0;
+        let rawCount = 0, parseFails = 0, plotted = 0, logged = 0;
         ws.onmessage = (ev) => {
           rawCount++;
-          let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+          let msg;
+          try {
+            const text = typeof ev.data === 'string' ? ev.data : decoder.decode(ev.data);
+            if (!text.trim()) return;   // keepalive/empty frame — not an error
+            msg = JSON.parse(text);
+          } catch (e) {
+            if (++parseFails <= 3) console.warn('[tracking] AIS frame decode failed', e, ev.data);
+            if (parseFails === 1 || parseFails % 100 === 0) {
+              status.ship = `connected · ${rawCount} msgs · ${parseFails} undecodable`;
+              updateLegend();
+            }
+            return;
+          }
           if (logged < 3) { console.debug('[tracking] AIS sample', msg); logged++; }
 
           const meta = msg.MetaData || msg.Metadata || msg.metaData || {};
           const body = msg.Message || msg.message || {};
-          const pr = body.PositionReport || body.positionReport;
-          const sd = body.ShipStaticData || body.shipStaticData;
+          const pr = body.PositionReport || body.positionReport ||
+                     body.StandardClassBPositionReport || body.ExtendedClassBPositionReport;
+          // Static data: Class A ShipStaticData, or Class B StaticDataReport
+          // (part B carries ShipType); ExtendedClassB also carries Type.
+          const sdr = body.StaticDataReport;
+          const sd = body.ShipStaticData || body.shipStaticData ||
+                     (sdr?.ReportB ? {
+                       Name: sdr.ReportA?.Name,
+                       Type: sdr.ReportB.ShipType,
+                       UserID: sdr.UserID,
+                     } : null) ||
+                     (body.ExtendedClassBPositionReport?.Type != null ? {
+                       Name: body.ExtendedClassBPositionReport.Name,
+                       Type: body.ExtendedClassBPositionReport.Type,
+                       UserID: body.ExtendedClassBPositionReport.UserID,
+                     } : null);
 
-          const mmsi = meta.MMSI || meta.mmsi || pr?.UserID || sd?.UserID;
+          const mmsi = meta.MMSI || meta.mmsi || pr?.UserID || sd?.UserID || sdr?.UserID;
           if (!mmsi) {
             if (rawCount <= 5 || rawCount % 100 === 0) {
               status.ship = `connected · ${rawCount} msgs · ${plotted} plotted (no MMSI?)`;
@@ -587,11 +992,25 @@
           }
 
           let entry = shipMarkers[mmsi];
-          if (!entry) entry = shipMarkers[mmsi] = { dest: null, name: meta.ShipName, marker: null };
+          if (!entry) {
+            const cached = shipTypeCache[mmsi];
+            entry = shipMarkers[mmsi] = {
+              dest: null,
+              name: meta.ShipName || cached?.n,
+              type: cached?.t ?? null,
+              marker: null,
+            };
+          }
 
           if (sd) {
             entry.dest = sd.Destination || sd.destination || entry.dest;
             entry.name = sd.Name || sd.name || entry.name;
+            const newType = sd.Type ?? sd.type;
+            if (newType != null && newType !== entry.type) {
+              entry.type = newType;
+              shipTypeCache[mmsi] = { t: newType, n: entry.name };
+              typeCacheDirty = true;
+            }
           }
 
           let lat = meta.latitude ?? meta.Latitude;
@@ -600,7 +1019,7 @@
             lat = pr.Latitude ?? pr.latitude;
             lon = pr.Longitude ?? pr.longitude;
           }
-          if (lat == null || lon == null) {
+          if (lat == null || lon == null || !inTrackingArea(lat, lon)) {
             if (rawCount % 50 === 0) {
               status.ship = `connected · ${rawCount} msgs · ${plotted} plotted`;
               updateLegend();
@@ -614,18 +1033,17 @@
             sog = pr.Sog || 0;
           }
 
-          const matched = shipDestMatchesCanada(entry.dest, lookups.portTokens);
-
           if (!entry.marker) {
-            entry.marker = L.marker([lat, lon], { icon: shipIcon(heading, matched), keyboard: false });
+            entry.marker = L.marker([lat, lon], { icon: shipIcon(heading, entry.type, entry.name), keyboard: false });
             entry.marker.addTo(shipGroup);
             plotted++;
           } else {
             entry.marker.setLatLng([lat, lon]);
-            entry.marker.setIcon(shipIcon(heading, matched));
+            entry.marker.setIcon(shipIcon(heading, entry.type, entry.name));
           }
           entry.marker.bindTooltip(
-            `<b>${eh((entry.name || meta.ShipName || 'Vessel').toString().trim())}</b><br>` +
+            `<b>${eh((entry.name || meta.ShipName || 'Vessel').toString().trim())}</b>` +
+            ` <span style="font-size:10px;color:#6b7280;">${eh(shipClass(entry.type, entry.name).label)}</span><br>` +
             `MMSI ${eh(mmsi)}<br>` +
             (entry.dest ? `Dest: ${eh(entry.dest)}<br>` : '') +
             `${sog.toFixed(1)} kn · hdg ${Math.round(heading)}°`,
@@ -646,16 +1064,20 @@
           <div class="legend-item"><span class="color-dot" style="background:#475569"></span>✈ Foreign over Canada</div>
           <div class="legend-item"><span class="color-dot" style="background:#065f46"></span>✈ Military</div>
           <div class="wx-row" style="font-size:10px;color:#6b7280;">icon shape: GA · narrowbody · widebody · helicopter · jet</div>
-          <div class="legend-item"><span class="color-dot" style="background:#0e7490"></span>🚢 Vessel (AIS) → CDN port</div>
+          ${SHIP_TYPE_COLORS.map(c =>
+            `<div class="legend-item"><span class="color-dot" style="background:${c.color}"></span>🚢 ${c.label}</div>`
+          ).join('')}
+          <div class="legend-item"><span class="color-dot" style="background:${SHIP_OTHER.color}"></span>🚢 ${SHIP_OTHER.label}</div>
+          <div class="legend-item"><span class="color-dot" style="background:#ffcc00"></span>🚆 VIA Rail train</div>
           <div class="legend-item"><span class="color-dot" style="background:#ea580c"></span>🐟 Fishing vessel (GFW, 7d)</div>
           <div class="wx-row" style="margin-top:6px;" id="tracking-status">connecting…</div>
-          <div class="wx-row">Refresh: ✈ ${AIRCRAFT_POLL_MS/1000}s · 🐟 1h</div>
+          <div class="wx-row">Refresh: ✈ ${AIRCRAFT_POLL_MS/1000}s · 🚢 live · 🚆 ${TRAIN_POLL_MS/1000}s · 🐟 1h</div>
         </div>`;
       }
 
       function controls() {
         const wrap = document.createElement('div');
-        [['planes', '✈ Aircraft'], ['ships', '🚢 Ships (AIS)'], ['fishing', '🐟 Fishing (GFW)']]
+        [['planes', '✈ Aircraft'], ['ships', '🚢 Ships (AIS)'], ['trains', '🚆 VIA Rail'], ['fishing', '🐟 Fishing (GFW)']]
           .forEach(([k, label]) => {
             const lab = document.createElement('label');
             lab.className = 'mapmode-sub-item';
@@ -675,25 +1097,39 @@
           planeGroup.addTo(m);
           shipGroup.addTo(m);
           fishGroup.addTo(m);
+          trainGroup.addTo(m);
           legendCtl = L.control({ position: 'bottomleft' });
           legendCtl.onAdd = () => { const d = L.DomUtil.create('div'); d.innerHTML = legendHTML(); return d; };
           legendCtl.addTo(m);
           updateLegend();
 
+          unmounted = false;
+          updateLegendRef = updateLegend;
           pollPlanes().catch(e => console.warn('[tracking] initial poll', e));
           pollTimer = setInterval(() => pollPlanes().catch(() => {}), AIRCRAFT_POLL_MS);
-          startShips();
+          pollAisApi().catch(() => {});
+          apiTimer = setInterval(() => pollAisApi().catch(() => {}), AIS_UPTIME_POLL_MS);
+          startShips().catch(e => console.warn('[tracking] startShips', e));
           loadFishing();
           fishTimer = setInterval(loadFishing, 60 * 60 * 1000);
+          pollTrains().catch(() => {});
+          trainTimer = setInterval(() => pollTrains().catch(() => {}), TRAIN_POLL_MS);
         },
         controls,
         unmount(m) {
+          unmounted = true;
+          updateLegendRef = null;
           if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
           if (fishTimer) { clearInterval(fishTimer); fishTimer = null; }
+          if (trainTimer) { clearInterval(trainTimer); trainTimer = null; }
+          if (apiTimer) { clearInterval(apiTimer); apiTimer = null; }
+          if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
           if (ws) { try { ws.close(); } catch {} ws = null; }
           planeGroup.clearLayers(); if (m.hasLayer(planeGroup)) m.removeLayer(planeGroup);
           shipGroup.clearLayers(); if (m.hasLayer(shipGroup)) m.removeLayer(shipGroup);
           fishGroup.clearLayers(); if (m.hasLayer(fishGroup)) m.removeLayer(fishGroup);
+          trainGroup.clearLayers(); if (m.hasLayer(trainGroup)) m.removeLayer(trainGroup);
+          Object.keys(trainMarkers).forEach(k => delete trainMarkers[k]);
           Object.keys(planeMarkers).forEach(k => delete planeMarkers[k]);
           Object.keys(shipMarkers).forEach(k => delete shipMarkers[k]);
           if (legendCtl) { m.removeControl(legendCtl); legendCtl = null; }
