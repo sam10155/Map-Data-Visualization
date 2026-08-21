@@ -1,10 +1,6 @@
 /**
- * Live aircraft + ship + VIA Rail train tracking overlay.
- *
- * Trains: tsimobile.viarail.ca/data/allData.json — all active VIA trains
- *   with position/speed/heading/schedule. No CORS upstream, so requires
- *   the proxy (serve.py locally, Cloudflare Worker on Pages). Freight
- *   (CN/CPKC) positions are not public — no feed exists.
+ * Live aircraft + ship tracking overlay.
+ * (Trains — VIA + city transit — live in js/layers/transit.js, the 🚏 tab.)
  *
  * Aircraft:
  *   • Primary:  adsb.lol (https://api.adsb.lol/) — CORS-open, no key.
@@ -556,57 +552,6 @@
     })).filter(v => v.lat != null && v.lon != null);
   }
 
-  // ---- VIA Rail trains ------------------------------------------------------
-  // tsimobile.viarail.ca/data/allData.json — every active VIA train keyed by
-  // "trainNo (MM-DD)". No CORS headers, so it must go through the proxy.
-  const TRAIN_POLL_MS = 30000;
-
-  async function fetchViaTrains() {
-    if (!PROXY) throw new Error('VIA feed needs the proxy (no CORS upstream)');
-    const j = await tfetch(buildUrl('tsimobile.viarail.ca', 'data/allData.json'), 10000);
-    const out = [];
-    for (const [id, t] of Object.entries(j || {})) {
-      if (t.lat == null || t.lng == null || t.arrived) continue;
-      const next = (t.times || []).find(s => s.eta && s.eta !== 'ARR');
-      out.push({
-        id,
-        no: id.split(' ')[0],
-        lat: t.lat, lon: t.lng,
-        speed: t.speed, dir: t.direction,
-        from: t.from, to: t.to,
-        next: next ? {
-          station: next.station,
-          eta: next.arrival?.estimated || next.estimated,
-          lateMin: next.diffMin,
-        } : null,
-      });
-    }
-    return out;
-  }
-
-  function trainIcon(dir) {
-    // Top-down train pointing "up", rotated to heading: locomotive with an
-    // angled nose + windshield, coupler gap, then a trailing coach.
-    return L.divIcon({
-      className: 'track-train',
-      html: `<svg width="26" height="26" viewBox="-13 -13 26 26">
-        <g transform="rotate(${dir || 0})">
-          <!-- locomotive -->
-          <path d="M-3,-11 L-1.6,-13.2 Q0,-14 1.6,-13.2 L3,-11 L3,-1 L-3,-1 Z"
-                fill="#ffcc00" stroke="#1f2937" stroke-width="1"/>
-          <path d="M-1.9,-11.4 L0,-12.4 L1.9,-11.4 L1.9,-9.6 L-1.9,-9.6 Z" fill="#1f2937"/>
-          <rect x="-2.1" y="-8.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
-          <!-- trailing coach -->
-          <rect x="-3" y="0.6" width="6" height="11.5" rx="1.4"
-                fill="#ffcc00" stroke="#1f2937" stroke-width="1"/>
-          <rect x="-2.1" y="2.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
-          <rect x="-2.1" y="5.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
-          <rect x="-2.1" y="8.4" width="4.2" height="1.6" rx="0.4" fill="#1f2937" opacity="0.55"/>
-        </g></svg>`,
-      iconSize: [26, 26], iconAnchor: [13, 13]
-    });
-  }
-
   function fishIcon() {
     return L.divIcon({
       className: 'track-ship',
@@ -627,13 +572,10 @@
       const planeGroup = L.layerGroup();
       const shipGroup = L.layerGroup();
       const fishGroup = L.layerGroup();
-      const trainGroup = L.layerGroup();
       const planeMarkers = {};
       const shipMarkers = {};
-      const trainMarkers = {};
       let pollTimer = null;
       let fishTimer = null;
-      let trainTimer = null;
       let apiTimer = null;
       let ws = null;
       let wsRetry = 0;
@@ -642,18 +584,11 @@
       let legendCtl = null;
       let mapRef = null;
       const lookups = buildLookups();
-      const visible = { planes: true, ships: true, trains: true, fishing: true };
-      const status = {
-        air: 'connecting…',
-        ship: getAisKey() ? 'connecting…' : 'no key',
-        fish: getGfwToken() ? 'loading…' : 'set GFW_API_TOKEN to enable',
-        train: PROXY ? 'loading…' : 'needs proxy (TRACKING_PROXY)',
-        api: null,   // AISStream-Uptime monitor result (null until first poll)
-      };
+      const visible = { planes: true, ships: true, fishing: true };
 
       function applyVisibility() {
         if (!mapRef) return;
-        [['planes', planeGroup], ['ships', shipGroup], ['trains', trainGroup], ['fishing', fishGroup]].forEach(([k, g]) => {
+        [['planes', planeGroup], ['ships', shipGroup], ['fishing', fishGroup]].forEach(([k, g]) => {
           if (visible[k]) { if (!mapRef.hasLayer(g)) g.addTo(mapRef); }
           else if (mapRef.hasLayer(g)) mapRef.removeLayer(g);
         });
@@ -685,7 +620,7 @@
               ? ` <span style="font-size:10px;color:#9ca3af;">(msg ${eh(agoStr(status.api.lastMessage))})</span>` : '')
           : '⚪ AIS API: checking…';
         el.innerHTML =
-          `✈ ${eh(status.air)}<br>🚢 ${eh(status.ship)}<br>${api}<br>🚆 ${eh(status.train)}<br>🐟 ${eh(status.fish)}`;
+          `✈ ${eh(status.air)}<br>🚢 ${eh(status.ship)}<br>${api}<br>🐟 ${eh(status.fish)}`;
       }
 
       function agoStr(d) {
@@ -728,51 +663,6 @@
           console.warn('[tracking] GFW failed', e);
           updateLegend();
         }
-      }
-
-      function trainTooltip(t) {
-        const late = t.next?.lateMin;
-        const lateHtml = late == null ? ''
-          : late <= 5 ? ` <span style="color:#16a34a;">on time</span>`
-          : ` <span style="color:#dc2626;">+${Math.round(late)} min</span>`;
-        return `<b>🚆 VIA ${eh(t.no)}</b><br>` +
-          `${eh(t.from || '?')} → ${eh(t.to || '?')}<br>` +
-          (t.next ? `Next: ${eh(t.next.station)}` +
-            (t.next.eta ? ` ${new Date(t.next.eta).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}` : '') +
-            lateHtml + '<br>' : '') +
-          `${Math.round(t.speed || 0)} km/h`;
-      }
-
-      async function pollTrains() {
-        if (!PROXY) { updateLegend(); return; }
-        let list;
-        try { list = await fetchViaTrains(); }
-        catch (e) {
-          status.train = `VIA feed error — ${e.message || e}`;
-          updateLegend();
-          return;
-        }
-        const seen = new Set();
-        list.forEach(t => {
-          seen.add(t.id);
-          let m = trainMarkers[t.id];
-          if (!m) {
-            m = trainMarkers[t.id] = L.marker([t.lat, t.lon], { icon: trainIcon(t.dir), keyboard: false });
-            m.addTo(trainGroup);
-          } else {
-            m.setLatLng([t.lat, t.lon]);
-            m.setIcon(trainIcon(t.dir));
-          }
-          m.bindTooltip(trainTooltip(t), { direction: 'top', offset: [0, -8] });
-        });
-        Object.keys(trainMarkers).forEach(id => {
-          if (!seen.has(id)) {
-            if (trainGroup.hasLayer(trainMarkers[id])) trainGroup.removeLayer(trainMarkers[id]);
-            delete trainMarkers[id];
-          }
-        });
-        status.train = `VIA · ${list.length} trains`;
-        updateLegend();
       }
 
       function planeTooltip(a, cdn) {
@@ -1068,16 +958,15 @@
             `<div class="legend-item"><span class="color-dot" style="background:${c.color}"></span>🚢 ${c.label}</div>`
           ).join('')}
           <div class="legend-item"><span class="color-dot" style="background:${SHIP_OTHER.color}"></span>🚢 ${SHIP_OTHER.label}</div>
-          <div class="legend-item"><span class="color-dot" style="background:#ffcc00"></span>🚆 VIA Rail train</div>
-          <div class="legend-item"><span class="color-dot" style="background:#ea580c"></span>🐟 Fishing vessel (GFW, 7d)</div>
+                    <div class="legend-item"><span class="color-dot" style="background:#ea580c"></span>🐟 Fishing vessel (GFW, 7d)</div>
           <div class="wx-row" style="margin-top:6px;" id="tracking-status">connecting…</div>
-          <div class="wx-row">Refresh: ✈ ${AIRCRAFT_POLL_MS/1000}s · 🚢 live · 🚆 ${TRAIN_POLL_MS/1000}s · 🐟 1h</div>
+          <div class="wx-row">Refresh: ✈ ${AIRCRAFT_POLL_MS/1000}s · 🚢 live · 🐟 1h · trains → 🚏 Transit tab</div>
         </div>`;
       }
 
       function controls() {
         const wrap = document.createElement('div');
-        [['planes', '✈ Aircraft'], ['ships', '🚢 Ships (AIS)'], ['trains', '🚆 VIA Rail'], ['fishing', '🐟 Fishing (GFW)']]
+        [['planes', '✈ Aircraft'], ['ships', '🚢 Ships (AIS)'], ['fishing', '🐟 Fishing (GFW)']]
           .forEach(([k, label]) => {
             const lab = document.createElement('label');
             lab.className = 'mapmode-sub-item';
@@ -1097,7 +986,6 @@
           planeGroup.addTo(m);
           shipGroup.addTo(m);
           fishGroup.addTo(m);
-          trainGroup.addTo(m);
           legendCtl = L.control({ position: 'bottomleft' });
           legendCtl.onAdd = () => { const d = L.DomUtil.create('div'); d.innerHTML = legendHTML(); return d; };
           legendCtl.addTo(m);
@@ -1112,8 +1000,6 @@
           startShips().catch(e => console.warn('[tracking] startShips', e));
           loadFishing();
           fishTimer = setInterval(loadFishing, 60 * 60 * 1000);
-          pollTrains().catch(() => {});
-          trainTimer = setInterval(() => pollTrains().catch(() => {}), TRAIN_POLL_MS);
         },
         controls,
         unmount(m) {
@@ -1121,15 +1007,12 @@
           updateLegendRef = null;
           if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
           if (fishTimer) { clearInterval(fishTimer); fishTimer = null; }
-          if (trainTimer) { clearInterval(trainTimer); trainTimer = null; }
           if (apiTimer) { clearInterval(apiTimer); apiTimer = null; }
           if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
           if (ws) { try { ws.close(); } catch {} ws = null; }
           planeGroup.clearLayers(); if (m.hasLayer(planeGroup)) m.removeLayer(planeGroup);
           shipGroup.clearLayers(); if (m.hasLayer(shipGroup)) m.removeLayer(shipGroup);
           fishGroup.clearLayers(); if (m.hasLayer(fishGroup)) m.removeLayer(fishGroup);
-          trainGroup.clearLayers(); if (m.hasLayer(trainGroup)) m.removeLayer(trainGroup);
-          Object.keys(trainMarkers).forEach(k => delete trainMarkers[k]);
           Object.keys(planeMarkers).forEach(k => delete planeMarkers[k]);
           Object.keys(shipMarkers).forEach(k => delete shipMarkers[k]);
           if (legendCtl) { m.removeControl(legendCtl); legendCtl = null; }

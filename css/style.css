@@ -594,7 +594,7 @@ body.dark #map { background: #0b1220; }
   vertical-align: middle;
 }
 
-.wx-arrow, .wx-storm, .wx-temp-label, .track-plane, .track-ship, .transport-icon, .pwr-icon, .pwr-electron {
+.wx-arrow, .wx-storm, .wx-temp-label, .track-plane, .track-ship, .track-train, .track-transit, .transport-icon, .pwr-icon, .pwr-electron {
   background: transparent !important; border: none !important;
 }
 

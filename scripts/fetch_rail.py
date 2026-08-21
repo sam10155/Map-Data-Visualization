@@ -63,6 +63,10 @@ def classify(tags):
     # CPKC first: "Canadian Pacific" contains "CANADIAN" and CN's full name
     # is "Canadian National" — order the tests carefully. French spellings
     # (Canadien National / Chemin de fer Canadien Pacifique) included.
+    # Labrador-trough iron-ore corridors get their own class (heavy-haul
+    # QNS&L / Cartier / Arnaud / Tshiuetin lines, Sept-Îles–Schefferville
+    # and Port-Cartier–Mont-Wright).
+    if re.search(r'LABRADOR|ARNAUD|CARTIER|WABUSH|TSHIUETIN|IRON ORE', op): return 'ore'
     if re.search(r'CPKC|KANSAS CITY|CANADIAN PACIFIC|CANADIEN PACIFIQUE|\bCP\b|\bCPR\b', op): return 'cpkc'
     if re.search(r'CANADIAN NATIONAL|CANADIEN NATIONAL|\bCN\b|\bCNR\b', op): return 'cn'
     if re.search(r'VIA RAIL|\bVIA\b', op): return 'via'

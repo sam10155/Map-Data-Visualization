@@ -1,3 +1,4 @@
 *.backup
 data/config.js
 .env
+__pycache__/

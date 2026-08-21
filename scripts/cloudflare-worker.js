@@ -26,7 +26,41 @@ const PROXY_ALLOW = new Set([
   'aisuptime.buttermilkgreen.fyi',   // AISStream-Uptime health check
   'tsimobile.viarail.ca',            // VIA Rail live train positions
   'cwfis.cfs.nrcan.gc.ca',           // NRCan wildfire hotspots/active fires
+  // GTFS-Realtime transit feeds (open, no key; no CORS upstream)
+  'bustime.ttc.ca',
+  'gtfs.edmonton.ca',
+  'opendata.hamilton.ca',
+  'www.miapp.ca',
+  'gtfs-rt-merge.prod.bt-cadavl.com',
+  'rtu.york.ca',
+  'drtonline.durhamregiontransit.com',
+  'gtfs.halifax.ca',
+  'api.openmetrolinx.com',           // GO/UP Express (key as query param)
+  'gtfsapi.translink.ca',            // TransLink Vancouver
+  'nextrip-public-api.azure-api.net',// OC Transpo
+  'data.calgary.ca',                 // Calgary Transit (302s to snapshot)
+  // 2026-08 transit discovery sweep
+  'busfinder.oakvilletransit.ca',
+  'opendata.burlington.ca',
+  '68.71.24.110',                    // Niagara Region Transit (http-only)
+  'metrolinx.tmix.se',
+  'glphprdtmgtfs.glphtrpcloud.com',
+  'webapps.regionofwaterloo.ca',
+  'www.myridebarrie.ca',
+  'gtfs.ltconline.ca',               // London LTC (http-only)
+  'api.cityofkingston.ca',
+  'windsor.mapstrat.com',
+  'sudbury.tmix.se',
+  'api.nextlift.ca',                 // Thunder Bay (http-only)
+  'northbay.tmix.se',
+  'ontarionorthland.tmix.se',
+  'bct.tmix.se',
+  'medicinehat.tmix.se',
+  'zenbus.net',
 ]);
+
+// http-only upstreams (no TLS offered)
+const PROXY_HTTP_ONLY = new Set(['68.71.24.110', 'gtfs.ltconline.ca', 'api.nextlift.ca']);
 
 function allowedOriginsList(env) {
   const v = (env.ALLOWED_ORIGINS || '*').trim();
@@ -224,15 +258,25 @@ async function handleProxy(req, env, host, path, search) {
   if (!PROXY_ALLOW.has(host)) {
     return new Response('host not allowed', { status: 403, headers: cors(env, req) });
   }
-  const upstream = `https://${host}/${path}${search}`;
-  const r = await fetch(upstream, {
-    method: req.method,
-    headers: { 'User-Agent': 'canada-map-viz/1.0', 'Accept': 'application/json' },
-    body: ['GET', 'HEAD'].includes(req.method) ? undefined : await req.arrayBuffer(),
-    // Never follow redirects: an allow-listed host returning 302 to an
-    // arbitrary URL would otherwise pivot the worker (SSRF).
-    redirect: 'manual',
-  });
+  let upstream = `${PROXY_HTTP_ONLY.has(host) ? 'http' : 'https'}://${host}/${path}${search}`;
+  let r;
+  // Follow redirects manually, but ONLY to https allow-listed hosts —
+  // an allow-listed host 302ing to an arbitrary URL would otherwise
+  // pivot the worker (SSRF). Calgary's Socrata GTFS-RT legitimately
+  // 302s within its own host to the current snapshot file.
+  for (let hop = 0; hop < 3; hop++) {
+    r = await fetch(upstream, {
+      method: req.method,
+      // */*: some upstreams (MiWay IIS) 406 a JSON-only Accept for .pb files
+      headers: { 'User-Agent': 'canada-map-viz/1.0', 'Accept': '*/*' },
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : await req.arrayBuffer(),
+      redirect: 'manual',
+    });
+    if (r.status < 300 || r.status >= 400) break;
+    const loc = new URL(r.headers.get('Location') || '', upstream);
+    if (loc.protocol !== 'https:' || !PROXY_ALLOW.has(loc.hostname)) break;
+    upstream = loc.href;
+  }
   if (r.status >= 300 && r.status < 400) {
     return new Response(JSON.stringify({ error: 'upstream redirect blocked' }),
       { status: 502, headers: cors(env, req, { 'Content-Type': 'application/json' }) });

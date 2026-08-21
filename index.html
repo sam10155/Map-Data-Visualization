@@ -11,7 +11,7 @@
         crossorigin="anonymous" />
   <script>
     // Cache-buster: append ?v=<version> to all local scripts AND css.
-    window.APP_VERSION = '20260806n';
+    window.APP_VERSION = '20260807f';
     document.write('<link rel="stylesheet" href="css/style.css?v=' +
       encodeURIComponent(window.APP_VERSION) + '">');
   </script>
@@ -104,6 +104,7 @@
         'js/layers/power.js',
         'js/layers/pipelines.js',
         'js/layers/tracking.js',
+        'js/layers/transit.js',
         'js/main.js'
       ].forEach(function(s){ document.write('<script src="'+s+v+'"><\/script>'); });
     })();

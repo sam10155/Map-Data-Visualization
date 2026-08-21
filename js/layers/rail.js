@@ -11,6 +11,9 @@
     cn:    { color: '#dc2626', label: 'CN',            weight: 2   },
     cpkc:  { color: '#ea580c', label: 'CPKC',          weight: 2   },
     via:   { color: '#6b7280', label: 'VIA / shared',  weight: 1.5 },
+    // QNS&L / Cartier / Arnaud / Tshiuetin — Labrador-trough iron-ore
+    // corridors; among the heaviest-tonnage lines in Canada.
+    ore:   { color: '#7c2d12', label: 'Iron ore (QNS&L·Cartier·Arnaud)', weight: 2 },
     other: { color: '#94a3b8', label: 'Other / shortline', weight: 1.2 },
   };
 
