@@ -26,7 +26,9 @@ Every facility carries `status` (Active / Idle / Closed / Under Construction / P
 
 | Layer | Source | Notes |
 |---|---|---|
-| 🌦️ **Weather** | [Open-Meteo](https://open-meteo.com) | Temperature grid, wind arrows, precipitation, ⚡ thunderstorms. Sub-toggles per variable; **↻ Fit view** refits the grid to your zoom level. National grid on mount, zero API calls on pan/zoom. |
+| 🌦️ **Weather** | ECCC GeoMet WMS + [Open-Meteo](https://open-meteo.com) | Windy/MSN-style rasters: HRDPS 2.5 km temperature field, wind speed + server-drawn arrows, **animated radar → nowcast → model precip**, CLDN lightning. Shared **timeline scrubber** (−3 h radar → +84 h forecast), hover shows values under the cursor (GetFeatureInfo), click opens an MSN-style 5-day local forecast. Legacy point grid behind a 📍 Values toggle. |
+| 🛩️ **Aviation Wx** | ECCC GeoMet (GDPS) + NOAA AWC | Winds/temp aloft at 850/700/500/250 mb (FL340 jet view) with the shared timeline (+144 h). METAR dots coloured by flight category (VFR/MVFR/IFR/LIFR) with raw METAR/TAF popups; Canadian-FIR SIGMET hazard polygons. Advisory only. |
+| 🚏 **Transit** | 28 GTFS-Realtime feeds + VIA | Live buses/streetcars/LRT for 28 Canadian systems (livery-coloured icons at street zoom), GO/UP regional rail + VIA Rail with per-mode toggles. Keyed feeds (GO, TransLink, STM, OC Transpo) via worker secrets. |
 | 💧 **Water Systems** | StatCan drainage regions + OSM + ECCC/DFO/ORRPB/HQ/QC | Official drainage-basin polygons (incl. separate Island-of-Newfoundland section), **54k Canada-clipped river segments**, and a **Water levels** sub-layer: ~2,900 live station markers classified very-low→very-high against per-station HYDAT monthly percentile bands, 36 major reservoirs with estimated **capacity/fill %** (gold ring), coastal tide gauges, 24-h level sparkline on click. Refreshed every 6 h by GitHub Action. |
 | 🔥 **Wildfires** | [NRCan CWFIS](https://cwfis.cfs.nrcan.gc.ca) + ECCC FireWork | Live active-fire markers (status-coloured, area-scaled), last-24 h satellite hotspots, **💨 surface-PM2.5 smoke forecast** (GeoMet WMS, current hour), optional fire-danger raster. Fetched client-side, refreshes hourly — no pre-baked data. |
 | ⚓ **Ports & Airports** | curated | ~50 seaports + inland ports, ~60 airports (intl + regional). |
@@ -62,8 +64,9 @@ Map-Data-Visulization/
 │   ├── aggregate.js  metrics.js  search.js  download.js
 │   ├── constants.js  tableview.js  mapmodes.js
 │   └── layers/
-│       ├── weather.js  water.js  transport.js  landuse.js
-│       ├── power.js  pipelines.js  tracking.js  rail.js  wildfire.js
+│       ├── weather.js  aviation.js  water.js  transport.js  landuse.js
+│       ├── power.js  pipelines.js  tracking.js  transit.js  rail.js  wildfire.js
+│   ├── wx-timeline.js            # shared weather/aviation forecast scrubber
 ├── data/
 │   ├── canada-data.js            # 862 industrial facilities (status/notes)
 │   ├── canada-power.js           # 566 plants + 221 transmission lines
@@ -190,7 +193,6 @@ The site is **100 % static** — every external feed used is either CORS-enabled
 2. Add **one** repo secret: `TRACKING_PROXY` = `https://canada-map-viz.<account>.workers.dev/`
 3. Push to `main`. The deploy workflow writes only the (public) worker URL into `config.js`; the browser connects to `wss://…/ais` and `…/gfw/events` and the worker injects the keys server-side.
 
-Full walkthrough: [`docs/SECURE_DEPLOY.md`](docs/SECURE_DEPLOY.md).
 
 ### 🪪 Direct mode — keys embedded client-side
 
