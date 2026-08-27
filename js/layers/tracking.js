@@ -261,7 +261,7 @@
   // remaining reachable from residential browsers — so try DIRECT first
   // and only fall back to the proxy per host. The winning transport is
   // remembered so a sweep doesn't double-request every tile.
-  const adsbTransport = {};
+  const adsbTransport = { 'adsbexchange-com1.p.rapidapi.com': 'proxy' };
 
   async function afetch(host, path) {
     const mode = adsbTransport[host];
@@ -304,6 +304,47 @@
     return Object.values(seen);
   }
 
+  // ---- ADS-B Exchange (paid, metered per request) ----
+  // Only fetches the tiles nearest the current view (max 4) instead of the
+  // 32-tile national sweep, so the RapidAPI bill tracks actual usage.
+  // Requires the ADSBX_KEY worker secret (or ADSBX_KEY env for serve.py);
+  // without it the worker answers 503 and the free chain takes over.
+  const ADSBX_HOST = 'adsbexchange-com1.p.rapidapi.com';
+  const ADSBX_MAX_TILES = 4;
+
+  function nearestCentres(m, n) {
+    const c = m ? m.getCenter() : { lat: 52, lng: -95 };
+    return [...ADSB_CENTRES]
+      .sort((a, b) =>
+        (Math.abs(a[0]-c.lat)+Math.abs(a[1]-c.lng)) -
+        (Math.abs(b[0]-c.lat)+Math.abs(b[1]-c.lng)))
+      .slice(0, n);
+  }
+
+  async function fetchAdsbx(onProgress, m) {
+    const seen = {};
+    let okCount = 0, lastErr = null, i = 0;
+    const tiles = nearestCentres(m, ADSBX_MAX_TILES);
+    for (const [la, lo] of tiles) {
+      i++;
+      try {
+        const json = await tfetch(buildUrl(ADSBX_HOST, `v2/point/${la}/${lo}/${ADSB_RADIUS_NM}/`));
+        okCount++;
+        (json.ac || []).forEach(a => {
+          const n = normalizeAc(a);
+          if (n && !seen[n.id]) seen[n.id] = n;
+        });
+      } catch (e) {
+        lastErr = e;
+        break;   // 503 = key not configured; 401/429 = key/quota problem — bail fast
+      }
+      onProgress?.(i, tiles.length, Object.keys(seen).length);
+      await sleep(300);
+    }
+    if (okCount === 0) throw new Error(`adsbx: ${lastErr?.message || 'unreachable'}`);
+    return Object.values(seen);
+  }
+
   const fetchAirplanesLive = (p) => fetchTiledFeed(
     'api.airplanes.live', (la,lo) => `v2/point/${la}/${lo}/${ADSB_RADIUS_NM}`, 'airplanes.live', p);
   const fetchAdsbLol = (p) => fetchTiledFeed(
@@ -330,6 +371,10 @@
 
   async function fetchAircraft(status) {
     const sources = [
+      // Paid, metered — first when its worker secret is configured; the
+      // worker answers 503 instantly when it isn't, so the free chain
+      // takes over with one cheap request wasted per 5-min cooldown.
+      ['ADS-B Exchange', (p) => fetchAdsbx(p, window.map)],
       ['airplanes.live', fetchAirplanesLive],
       ['adsb.lol',       fetchAdsbLol],
       ['adsb.fi',        fetchAdsbFi],
@@ -1042,3 +1087,4 @@
     }
   });
 })();
+

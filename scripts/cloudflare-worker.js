@@ -18,6 +18,7 @@
  *   TRANSLINK_KEY       — TransLink Vancouver GTFS-RT
  *   OCTRANSPO_KEY       — OC Transpo (Azure APIM subscription key)
  *   STM_KEY             — STM Montréal (sent as apiKey header)
+ *   ADSBX_KEY           — ADS-B Exchange via RapidAPI (paid; X-RapidAPI-Key)
  *   ALLOWED_ORIGINS     — (optional) comma-separated list; "*" if unset
  */
 
@@ -63,6 +64,7 @@ const PROXY_ALLOW = new Set([
   'zenbus.net',
   'api.stm.info',                    // STM Montréal (worker injects apiKey header)
   'aviationweather.gov',             // NOAA AWC — METARs/TAFs/SIGMETs (Canadian aerodromes/FIRs)
+  'adsbexchange-com1.p.rapidapi.com',// ADS-B Exchange (paid, worker injects RapidAPI key)
 ]);
 
 // Transit API keys stored as worker secrets — injected upstream so the
@@ -282,6 +284,14 @@ async function handleProxy(req, env, host, path, search) {
     }
   }
   if (host === 'api.stm.info' && env.STM_KEY) upHeaders['apiKey'] = env.STM_KEY;
+  if (host === 'adsbexchange-com1.p.rapidapi.com') {
+    if (!env.ADSBX_KEY) {
+      return new Response(JSON.stringify({ error: 'ADSBX_KEY not configured' }),
+        { status: 503, headers: cors(env, req, { 'Content-Type': 'application/json' }) });
+    }
+    upHeaders['X-RapidAPI-Key'] = env.ADSBX_KEY;
+    upHeaders['X-RapidAPI-Host'] = host;
+  }
   let r;
   // Follow redirects manually, but ONLY to https allow-listed hosts —
   // an allow-listed host 302ing to an arbitrary URL would otherwise
@@ -344,3 +354,4 @@ export default {
       { status: 200, headers: cors(env, req, { 'Content-Type': 'text/plain' }) });
   },
 };
+

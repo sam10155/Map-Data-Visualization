@@ -99,6 +99,7 @@ PROXY_ALLOW = {
     'medicinehat.tmix.se',
     'zenbus.net',
     'aviationweather.gov',
+    'adsbexchange-com1.p.rapidapi.com',   # paid ADS-B Exchange (key injected below)
 }
 
 # Hosts that only serve plain HTTP (Niagara's bare-IP BusTime, London LTC,
@@ -156,6 +157,15 @@ class Handler(SimpleHTTPRequestHandler):
                 'Accept': '*/*',
                 'Content-Type': fwd_ct,
             })
+        # Paid ADS-B Exchange: inject the RapidAPI key from the environment
+        # (export ADSBX_KEY=... before starting serve.py to test locally).
+        if host == 'adsbexchange-com1.p.rapidapi.com':
+            import os
+            k = os.environ.get('ADSBX_KEY', '')
+            if not k:
+                self.send_error(503, 'ADSBX_KEY not set'); return
+            req.add_header('X-RapidAPI-Key', k)
+            req.add_header('X-RapidAPI-Host', host)
         opener = _weak_opener if host in PROXY_WEAK_TLS else _opener
         try:
             with opener.open(req, timeout=60) as r:
@@ -208,3 +218,4 @@ def run():
 
 if __name__ == '__main__':
     run()
+
