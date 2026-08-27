@@ -98,6 +98,7 @@ PROXY_ALLOW = {
     'bct.tmix.se',
     'medicinehat.tmix.se',
     'zenbus.net',
+    'aviationweather.gov',
 }
 
 # Hosts that only serve plain HTTP (Niagara's bare-IP BusTime, London LTC,

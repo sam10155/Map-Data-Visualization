@@ -5,8 +5,8 @@
  *   default     — OpenStreetMap standard
  *   satellite   — Esri World Imagery (+ reference labels)
  *   nightlights — NASA GIBS VIIRS Black Marble (Earth at Night city-lights)
- *                 over CartoDB dark base (Black Marble only goes to z8)
- *   dark        — CartoDB Dark Matter (plain dark cartographic map)
+ *                 over Esri Dark Gray base (Black Marble only goes to z8)
+ *   dark UI     — swaps to Esri Dark Gray Canvas (keyless, attribution-only)
  *
  * Extras (independent toggles):
  *   • 🌙 Dark UI — restyles panels/popups/legend
@@ -17,10 +17,28 @@
  */
 
 (function () {
-  const CARTO_DARK = {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    opts: { maxZoom: 20, minZoom: 3, subdomains: 'abcd',
-            attribution: '© OpenStreetMap, © CARTO' },
+  // Stadia "Alidade Smooth Dark" — the CARTO-Dark-Matter-style look.
+  // Free non-commercial tier (200k tiles/mo) authenticated by DOMAIN, not
+  // an API key: register the site's domain at stadiamaps.com (free
+  // account → property → add domain). localhost works with no signup.
+  // (CARTO ended anonymous access 2026-08 — key-only, no hobby tier.)
+  const STADIA_DARK = {
+    url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',
+    opts: { maxZoom: 20, minZoom: 3,
+            attribution: '© Stadia Maps, © OpenMapTiles, © OpenStreetMap contributors' },
+  };
+
+  // Esri Dark Gray Canvas — keyless fallback if Stadia 401s (domain not
+  // registered); also the base under the Night Lights overlay so Black
+  // Marble browsing doesn't burn Stadia's free-tier tile budget.
+  const ESRI_DARK = {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    opts: { maxZoom: 16, minZoom: 3,
+            attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors' },
+    labels: {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+      opts: { maxZoom: 16, minZoom: 3, pane: 'overlayPane', opacity: 0.9 },
+    },
   };
 
   const BASEMAPS = {
@@ -28,8 +46,10 @@
       label: 'Default',
       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       opts: { maxZoom: 19, minZoom: 3, attribution: '© OpenStreetMap contributors' },
-      // Dark UI swaps the light OSM tiles for CartoDB Dark Matter.
-      dark: CARTO_DARK,
+      // Dark UI swaps the light OSM tiles for Stadia's dark style;
+      // falls back to Esri Dark Gray automatically if Stadia 401s.
+      dark: { url: STADIA_DARK.url, opts: STADIA_DARK.opts,
+              fallback: { url: ESRI_DARK.url, opts: ESRI_DARK.opts, overlay: ESRI_DARK.labels } },
     },
     satellite: {
       label: 'Satellite',
@@ -42,9 +62,9 @@
     },
     nightlights: {
       label: 'Night Lights',
-      // CartoDB dark provides context at all zooms; Black Marble overlays on top.
-      url: CARTO_DARK.url,
-      opts: CARTO_DARK.opts,
+      // Esri dark canvas provides context at all zooms; Black Marble overlays on top.
+      url: ESRI_DARK.url,
+      opts: ESRI_DARK.opts,
       overlay: {
         url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png',
         opts: {
@@ -96,40 +116,49 @@
     return { lat: deg(decl), lon: ((subLon + 540) % 360) - 180 };
   }
 
-  function nightPolygon(date) {
-    // Build the terminator as a polygon covering the night hemisphere.
-    // For each longitude step, compute the latitude where solar altitude = 0.
-    const sp = subsolarPoint(date);
-    const slat = rad(sp.lat);
+  // Latitude (rad) where solar altitude equals `alt` at hour angle H:
+  //   sin(alt) = sinδ·sinφ + cosδ·cosφ·cosH  →  φ = asin(sin alt / R) − ψ
+  // with R = √(sin²δ + (cosδ·cosH)²), ψ = atan2(cosδ·cosH, sinδ).
+  // (alt = 0 reduces to the classic tanφ = −cosH/tanδ terminator.)
+  function isolineLat(H, decl, alt) {
+    const A = Math.sin(decl), B = Math.cos(decl) * Math.cos(H);
+    const R = Math.hypot(A, B), psi = Math.atan2(B, A);
+    const s = Math.min(1, Math.max(-1, Math.sin(alt) / (R || 1e-12)));
+    return Math.asin(s) - psi;
+  }
+
+  function twilightPolygon(sp, altDeg) {
+    // Polygon covering the region where the sun is below altDeg.
+    const decl = rad(sp.lat);
     const pts = [];
     const STEP = 2;
     for (let lon = -180; lon <= 180; lon += STEP) {
       const H = rad(lon - sp.lon);
-      // tan(lat) = -cos(H) / tan(decl)
-      let lat;
-      if (Math.abs(slat) < 1e-6) {
-        lat = 0;
-      } else {
-        lat = deg(Math.atan(-Math.cos(H) / Math.tan(slat)));
-      }
+      const lat = Math.max(-89.99, Math.min(89.99, deg(isolineLat(H, decl, rad(altDeg)))));
       pts.push([lat, lon]);
     }
     // Close the polygon over whichever pole is in night.
     const polarLat = sp.lat >= 0 ? -90 : 90;
     pts.push([polarLat, 180], [polarLat, -180]);
-    return { poly: pts, subsolar: sp };
+    return pts;
   }
 
   function drawTerminator() {
     if (!mapRef || !termGroup) return;
     termGroup.clearLayers();
-    const { poly, subsolar } = nightPolygon(new Date());
+    const subsolar = subsolarPoint(new Date());
 
-    L.polygon(poly, {
-      stroke: true, color: '#fde047', weight: 1.5, opacity: 0.8,
-      fill: true, fillColor: '#0b1220', fillOpacity: 0.35,
-      interactive: false, pane: 'overlayPane',
-    }).addTo(termGroup);
+    // HOI4-style soft shadow: stacked twilight bands (sunset → civil →
+    // nautical → astronomical → deep night), each adding a little more
+    // darkness, so the shadow visibly deepens away from the sun line.
+    const BANDS = [0, -3, -6, -9, -12, -15, -18];
+    BANDS.forEach((alt, i) => {
+      L.polygon(twilightPolygon(subsolar, alt), {
+        stroke: i === 0, color: '#fde047', weight: 1, opacity: 0.45,
+        fill: true, fillColor: '#0b1220', fillOpacity: i === 0 ? 0.10 : 0.075,
+        interactive: false, pane: 'overlayPane',
+      }).addTo(termGroup);
+    });
 
     L.circleMarker([subsolar.lat, subsolar.lon], {
       radius: 7, color: '#fbbf24', weight: 2,
@@ -186,9 +215,30 @@
     loadedTileUrl = tiles.url;
     baseLayer = L.tileLayer(tiles.url, tiles.opts).addTo(mapRef);
     baseLayer.setZIndex(0);
-    if (def.overlay) {
-      baseOverlay = L.tileLayer(def.overlay.url, def.overlay.opts).addTo(mapRef);
+    const ov = tiles.overlay || def.overlay;
+    if (ov) {
+      baseOverlay = L.tileLayer(ov.url, ov.opts).addTo(mapRef);
       baseOverlay.setZIndex(1);
+    }
+
+    // Auth-gated tile sources (Stadia): if tiles keep erroring, swap to
+    // the declared keyless fallback instead of showing a blank map.
+    if (tiles.fallback) {
+      let errs = 0;
+      baseLayer.on('tileerror', () => {
+        if (++errs < 4 || loadedTileUrl !== tiles.url) return;
+        console.warn('[basemap] dark tiles failing (domain not registered with Stadia?) — falling back');
+        const fb = tiles.fallback;
+        mapRef.removeLayer(baseLayer);
+        if (baseOverlay) { mapRef.removeLayer(baseOverlay); baseOverlay = null; }
+        loadedTileUrl = fb.url;
+        baseLayer = L.tileLayer(fb.url, fb.opts).addTo(mapRef);
+        baseLayer.setZIndex(0);
+        if (fb.overlay) {
+          baseOverlay = L.tileLayer(fb.overlay.url, fb.overlay.opts).addTo(mapRef);
+          baseOverlay.setZIndex(1);
+        }
+      });
     }
 
     current = id;

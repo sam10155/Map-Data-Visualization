@@ -150,7 +150,7 @@
       // SkyTrain/Canada Line don't report in the bus feed; WCE = 997.
       rules: [[/^99[0-9]$/, 'regional']] },
     { id: 'octranspo', label: 'OC Transpo', color: '#d04328',
-      host: 'nextrip-public-api.azure-api.net', path: 'octranspo/gtfs-rt-vp/v1/VehiclePositions',
+      host: 'nextrip-public-api.azure-api.net', path: 'octranspo/gtfs-rt-vp/beta/v1/VehiclePositions',
       bbox: [45.1, -76.1, 45.55, -75.3],
       keyName: 'octranspo_key', keyParam: 'subscription-key',
       rules: [[/^1$|^2$|^4$/, 'lrt']] },
@@ -255,11 +255,16 @@
 
   async function fetchFeed(a) {
     const key = a.keyName ? getKey(a.keyName) : null;
-    if (a.keyName && !key) return null;   // key not configured — skip quietly
-    let qs = a.path.includes('?') ? '&' : '?';
+    // Against the deployed Cloudflare worker (absolute proxy URL) keyed
+    // agencies are attempted WITHOUT a browser key — the worker injects
+    // its stored secret upstream. Local dev (/proxy/) has no secrets, so
+    // skip quietly there unless a localStorage key is set.
+    const workerMode = !proxyBase().startsWith('/');
+    if (a.keyName && !key && !workerMode) return null;
+    const qs = a.path.includes('?') ? '&' : '?';
     let params = '';
     if (key && a.keyParam) params = `${qs}${a.keyParam}=${encodeURIComponent(key)}`;
-    if (a.direct) {
+    if (a.direct && (!a.keyName || key)) {
       const url = `https://${a.host}/${a.path}${params}`;
       const headers = (key && a.keyHeader) ? { [a.keyHeader]: key } : undefined;
       const res = await fetch(url, { headers });
@@ -394,15 +399,11 @@
   }
 
   function legendHTML() {
-    const keyed = AGENCIES.filter(a => a.keyName);
-    const missing = keyed.filter(a => !getKey(a.keyName));
     return `<div class="overlay-legend">
       <div class="overlay-legend-title">🚏 Live Transit</div>
-      <div class="legend-item">🚌 bus · 🚋 streetcar · 🚈 LRT — livery colours, zoom ≥ ${LOCAL_ZOOM}</div>
-      <div class="legend-item">🚆 <span style="color:#00853f;font-weight:600;">GO</span>/<span style="color:#3d1152;font-weight:600;">UP</span> regional · 🚄 <span style="color:#b8860b;font-weight:600;">VIA</span> — any zoom</div>
-      <div class="wx-row" id="transit-status" style="color:#9ca3af;">loading…</div>
-      ${missing.length ? `<div class="wx-row">🔑 no key set: ${missing.map(a => a.label).join(', ')} — see js/layers/transit.js header</div>` : ''}
-      <div class="wx-row">GTFS-Realtime · agencies' open data · VIA tsimobile</div>
+      <div class="legend-item">🚌 bus · 🚋 streetcar · 🚈 LRT · 🚆 GO/UP · 🚄 VIA — livery colours</div>
+      <div class="wx-row" id="transit-status" style="color:#9ca3af;">⚪ connecting…</div>
+      <div class="wx-row">GTFS-RT · agency open data</div>
     </div>`;
   }
 
@@ -418,9 +419,9 @@
       let legendCtl = null, mapRef = null, timer = null, moveT = null;
       let unmounted = false;
 
-      const setStatus = msg => {
+      const setStatus = html => {
         const el = document.getElementById('transit-status');
-        if (el) el.textContent = msg || '';
+        if (el) el.innerHTML = html || '';
       };
 
       function anyLocalOn() { return visible.bus || visible.streetcar || visible.lrt; }
@@ -432,7 +433,6 @@
         const view = b.pad(0.15);
         const useIcons = z >= ICON_ZOOM;
         const counts = { bus: 0, streetcar: 0, lrt: 0, regional: 0, via: 0 };
-        const errs = [];
 
         // which agencies to fetch this cycle
         const wanted = AGENCIES.filter(a => {
@@ -443,8 +443,13 @@
           return anyLocalOn() && z >= LOCAL_ZOOM;
         });
 
-        const jobs = wanted.map(a => fetchFeed(a).then(v => [a, v], e => { errs.push(a.label); return [a, null]; }));
-        const viaJob = visible.via ? fetchVia().then(v => v, e => { errs.push('VIA'); return null; }) : Promise.resolve(null);
+        const skipped = [];   // keyed agencies not attempted (no key, local dev)
+        const errsMap = {};
+        const jobs = wanted.map(a => fetchFeed(a).then(
+          v => { if (v === null && a.keyName) skipped.push(a.label); return [a, v]; },
+          e => { errsMap[a.label] = e.message || 'error'; return [a, null]; }));
+        let viaErr = null;
+        const viaJob = visible.via ? fetchVia().then(v => v, e => { viaErr = e.message || 'error'; return null; }) : Promise.resolve(null);
         const [results, viaTrains] = await Promise.all([Promise.all(jobs), viaJob]);
         if (unmounted) return;
 
@@ -485,11 +490,28 @@
           counts.via++;
         });
 
-        const parts = Object.entries(counts)
-          .filter(([m]) => visible[m])
-          .map(([m, n]) => `${MODES[m].label.slice(0, 2)} ${n.toLocaleString()}`);
-        const zoomHint = anyLocalOn() && z < LOCAL_ZOOM ? ' · zoom ≥ 10 for city fleets' : '';
-        setStatus(parts.join(' · ') + zoomHint + (errs.length ? ` · ⚠ ${errs.join(',')}` : ''));
+        const okLocal = results.filter(([a, v]) => v &&
+          !(a.rules || []).some(r => r[1] === 'regional')).map(([a]) => a.label);
+        const rows = [];
+        if (anyLocalOn()) {
+          const n = counts.bus + counts.streetcar + counts.lrt;
+          if (z < LOCAL_ZOOM) rows.push(`⚪ city fleets: zoom ≥ ${LOCAL_ZOOM}`);
+          else if (!okLocal.length) rows.push('⚪ city fleets: none in view');
+          else rows.push(`🟢 ${n.toLocaleString()} city vehicles · ` +
+            (okLocal.length > 3 ? `${okLocal.slice(0, 3).join('+')} +${okLocal.length - 3}` : okLocal.join('+')));
+        }
+        if (visible.regional) {
+          const goAttempted = wanted.some(a => (a.rules || []).some(r => r[1] === 'regional'));
+          if (counts.regional) rows.push(`🟢 GO/commuter: ${counts.regional}`);
+          else if (skipped.length) rows.push(`🔑 GO/commuter: key needed (${skipped.join(', ')})`);
+          else if (goAttempted) rows.push('⚪ GO/commuter: 0 in view');
+        }
+        if (visible.via) {
+          rows.push(viaErr ? `🔴 VIA: ${eh(viaErr)}` : `🟢 VIA: ${counts.via} trains`);
+        }
+        Object.entries(errsMap).slice(0, 3).forEach(([label, msg]) =>
+          rows.push(`🔴 ${eh(label)}: ${eh(msg)}`));
+        setStatus(rows.join('<br>'));
       }
 
       function applyVisibility() {

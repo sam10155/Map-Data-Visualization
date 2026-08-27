@@ -93,6 +93,14 @@ function isMarkerDeleted(marker) {
 function updateVisibility() {
   let visible = 0;
 
+  // Sector Legend only earns its screen space when at least one dataset
+  // is selected (they all start unchecked on a fresh load).
+  const legendEl = document.querySelector('.legend');
+  if (legendEl) {
+    const anyDataset = Object.values(filters.datasets || {}).some(v => v);
+    legendEl.style.display = anyDataset ? '' : 'none';
+  }
+
   Object.entries(markers).forEach(([key, items]) => {
     items.forEach(({ marker, facility }) => {
       if (isMarkerDeleted(marker)) {

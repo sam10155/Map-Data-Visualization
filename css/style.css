@@ -84,6 +84,8 @@ body.dark #map { background: #0b1220; }
 .checkbox-item:hover { background: var(--panel-bg-alt); }
 
 .color-dot {
+  display: inline-block;            /* keeps size in inline contexts too */
+  vertical-align: middle;
   width: 12px; height: 12px;
   border-radius: 50%;
   border: 1px solid rgba(0,0,0,0.2);
@@ -804,3 +806,25 @@ body.dark .livestock-heat-canvas {
   border: 1px solid rgba(0,0,0,0.2);
 }
 body.dark .lu-tip-swatch { border-color: rgba(255,255,255,0.25); }
+
+
+/* Shared weather/aviation timeline bar — bottom-centre of the map */
+.wx-timeline-bar {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 1000; background: rgba(255,255,255,0.94); border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.3); padding: 6px 12px; width: 360px;
+  font-family: inherit;
+}
+body.dark .wx-timeline-bar { background: rgba(24,30,42,0.94); color: #e5e7eb; }
+.wx-tl-row { display: flex; align-items: center; gap: 6px; }
+.wx-tl-btn { border: 1px solid #d1d5db; border-radius: 4px; background: white;
+  font-size: 11px; cursor: pointer; padding: 1px 8px; }
+body.dark .wx-tl-btn { background: #1f2937; color: #e5e7eb; border-color: #374151; }
+.wx-tl-label { font-size: 11px; font-weight: 600; }
+.wx-tl-range { width: 100%; margin: 4px 0 0; }
+.wx-tl-edges { display: flex; justify-content: space-between; font-size: 9px; color: #9ca3af; }
+.wx-hover { font-size: 11px; line-height: 1.35; }
+
+
+/* aviation legend category chips */
+.avn-cat { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; font-size: 11px; }

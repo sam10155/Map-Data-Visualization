@@ -256,13 +256,35 @@
     await Promise.allSettled(workers);
   }
 
+  // Per-host transport choice for the community ADS-B APIs: they now
+  // block datacenter/Cloudflare IPs (the worker gets 403/429) while
+  // remaining reachable from residential browsers — so try DIRECT first
+  // and only fall back to the proxy per host. The winning transport is
+  // remembered so a sweep doesn't double-request every tile.
+  const adsbTransport = {};
+
+  async function afetch(host, path) {
+    const mode = adsbTransport[host];
+    if (mode !== 'proxy') {
+      try {
+        const j = await tfetch(`https://${host}/${path}`);
+        adsbTransport[host] = 'direct';
+        return j;
+      } catch (e) {
+        if (mode === 'direct' || !PROXY) throw e;  // direct was fine before (or no proxy) — real error
+        adsbTransport[host] = 'proxy';
+      }
+    }
+    return tfetch(buildUrl(host, path));
+  }
+
   async function fetchTiledFeed(host, pathFn, label, onProgress) {
     const seen = {};
     let okCount = 0, lastErr = null, consecFails = 0, i = 0;
     for (const [la, lo] of ADSB_CENTRES) {
       i++;
       try {
-        const json = await tfetch(buildUrl(host, pathFn(la, lo)));
+        const json = await afetch(host, pathFn(la, lo));
         okCount++;
         consecFails = 0;
         (json.ac || json.aircraft || []).forEach(a => {
@@ -953,14 +975,12 @@
           <div class="legend-item"><span class="color-dot" style="background:#dc2626"></span>✈ Canadian-registered</div>
           <div class="legend-item"><span class="color-dot" style="background:#475569"></span>✈ Foreign over Canada</div>
           <div class="legend-item"><span class="color-dot" style="background:#065f46"></span>✈ Military</div>
-          <div class="wx-row" style="font-size:10px;color:#6b7280;">icon shape: GA · narrowbody · widebody · helicopter · jet</div>
           ${SHIP_TYPE_COLORS.map(c =>
             `<div class="legend-item"><span class="color-dot" style="background:${c.color}"></span>🚢 ${c.label}</div>`
           ).join('')}
           <div class="legend-item"><span class="color-dot" style="background:${SHIP_OTHER.color}"></span>🚢 ${SHIP_OTHER.label}</div>
                     <div class="legend-item"><span class="color-dot" style="background:#ea580c"></span>🐟 Fishing vessel (GFW, 7d)</div>
           <div class="wx-row" style="margin-top:6px;" id="tracking-status">connecting…</div>
-          <div class="wx-row">Refresh: ✈ ${AIRCRAFT_POLL_MS/1000}s · 🚢 live · 🐟 1h · trains → 🚏 Transit tab</div>
         </div>`;
       }
 

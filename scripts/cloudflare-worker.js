@@ -14,6 +14,10 @@
  * Worker secrets (set via `wrangler secret put …` or dashboard):
  *   AISSTREAM_API_KEY   — aisstream.io key
  *   GFW_API_TOKEN       — Global Fishing Watch JWT
+ *   METROLINX_KEY       — GO/UP Express (api.openmetrolinx.com)
+ *   TRANSLINK_KEY       — TransLink Vancouver GTFS-RT
+ *   OCTRANSPO_KEY       — OC Transpo (Azure APIM subscription key)
+ *   STM_KEY             — STM Montréal (sent as apiKey header)
  *   ALLOWED_ORIGINS     — (optional) comma-separated list; "*" if unset
  */
 
@@ -57,7 +61,18 @@ const PROXY_ALLOW = new Set([
   'bct.tmix.se',
   'medicinehat.tmix.se',
   'zenbus.net',
+  'api.stm.info',                    // STM Montréal (worker injects apiKey header)
+  'aviationweather.gov',             // NOAA AWC — METARs/TAFs/SIGMETs (Canadian aerodromes/FIRs)
 ]);
+
+// Transit API keys stored as worker secrets — injected upstream so the
+// browser never sees them. [host, query-param, secret name]. STM takes
+// its key as a header instead (handled inline below).
+const TRANSIT_KEY_PARAMS = [
+  ['api.openmetrolinx.com', 'key', 'METROLINX_KEY'],
+  ['gtfsapi.translink.ca', 'apikey', 'TRANSLINK_KEY'],
+  ['nextrip-public-api.azure-api.net', 'subscription-key', 'OCTRANSPO_KEY'],
+];
 
 // http-only upstreams (no TLS offered)
 const PROXY_HTTP_ONLY = new Set(['68.71.24.110', 'gtfs.ltconline.ca', 'api.nextlift.ca']);
@@ -259,6 +274,14 @@ async function handleProxy(req, env, host, path, search) {
     return new Response('host not allowed', { status: 403, headers: cors(env, req) });
   }
   let upstream = `${PROXY_HTTP_ONLY.has(host) ? 'http' : 'https'}://${host}/${path}${search}`;
+  const upHeaders = { 'User-Agent': 'canada-map-viz/1.0', 'Accept': '*/*' };
+  for (const [h, param, secret] of TRANSIT_KEY_PARAMS) {
+    if (host === h && env[secret] && !upstream.includes(`${param}=`)) {
+      upstream += (upstream.includes('?') ? '&' : '?') +
+        `${param}=${encodeURIComponent(env[secret])}`;
+    }
+  }
+  if (host === 'api.stm.info' && env.STM_KEY) upHeaders['apiKey'] = env.STM_KEY;
   let r;
   // Follow redirects manually, but ONLY to https allow-listed hosts —
   // an allow-listed host 302ing to an arbitrary URL would otherwise
@@ -268,7 +291,7 @@ async function handleProxy(req, env, host, path, search) {
     r = await fetch(upstream, {
       method: req.method,
       // */*: some upstreams (MiWay IIS) 406 a JSON-only Accept for .pb files
-      headers: { 'User-Agent': 'canada-map-viz/1.0', 'Accept': '*/*' },
+      headers: upHeaders,
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : await req.arrayBuffer(),
       redirect: 'manual',
     });
