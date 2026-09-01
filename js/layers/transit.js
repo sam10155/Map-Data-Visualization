@@ -135,20 +135,26 @@
       host: 'api.openmetrolinx.com', path: 'OpenDataAPI/api/V1/Gtfs/Feed/VehiclePosition',
       bbox: [42.9, -80.6, 44.7, -78.0],
       keyName: 'metrolinx_key', keyParam: 'key',
-      // GO rail route ids are letter codes (LW Lakeshore West, ST, RH…);
-      // numeric routes are GO buses.
+      // Feed route_ids look like "06260926-56"; the suffix is the short
+      // code — letters (LW Lakeshore West, ST, RH…) = trains, numbers =
+      // GO buses.
+      routeShort: r => String(r).split('-').pop(),
       rules: [[/^[A-Z]{2}/, 'regional']] },
     { id: 'upx', label: 'UP Express', color: '#3d1152',
       host: 'api.openmetrolinx.com', path: 'OpenDataAPI/api/V1/UP/Gtfs/Feed/VehiclePosition',
       bbox: [43.6, -79.65, 43.72, -79.35],
       keyName: 'metrolinx_key', keyParam: 'key',
+      routeShort: r => String(r).split('-').pop(),
       rules: [[/./, 'regional']] },
     { id: 'translink', label: 'TransLink', color: '#0761a5',
       host: 'gtfsapi.translink.ca', path: 'v3/gtfsposition',
       bbox: [49.0, -123.35, 49.40, -122.4],
       keyName: 'translink_key', keyParam: 'apikey',
-      // SkyTrain/Canada Line don't report in the bus feed; WCE = 997.
-      rules: [[/^99[0-9]$/, 'regional']] },
+      // Feed uses internal numeric route_ids — mapped to short names via
+      // the baked static-GTFS table (scripts/fetch_translink_routes.py).
+      // SkyTrain/Canada Line (driverless) never report; WCE does.
+      routeMap: 'data/translink-routes.json',
+      rules: [[/^WCE$/, 'regional']] },
     { id: 'octranspo', label: 'OC Transpo', color: '#d04328',
       host: 'nextrip-public-api.azure-api.net', path: 'octranspo/gtfs-rt-vp/beta/v1/VehiclePositions',
       bbox: [45.1, -76.1, 45.55, -75.3],
@@ -242,6 +248,31 @@
     return map;
   }
 
+  // Metrolinx serves GTFS-RT as JSON by default (snake_case per the
+  // canonical mapping). Same information as the protobuf feeds.
+  function decodeVehiclePositionsJson(doc) {
+    return (doc.entity || doc.Entity || []).map(e => {
+      const vp = e.vehicle; if (!vp) return null;
+      const pos = vp.position || {}, trip = vp.trip || {}, veh = vp.vehicle || {};
+      return {
+        lat: pos.latitude, lon: pos.longitude,
+        bearing: pos.bearing, speed: pos.speed,
+        route: trip.route_id || trip.routeId,
+        trip: trip.trip_id || trip.tripId,
+        vid: veh.id, label: veh.label, ts: vp.timestamp,
+      };
+    }).filter(v => v && v.lat != null && v.lon != null);
+  }
+
+  // Sniff the payload: '{' → JSON GTFS-RT, anything else → protobuf.
+  function decodeAny(buf) {
+    const u8 = new Uint8Array(buf);
+    let i = 0;
+    while (i < u8.length && (u8[i] === 0x20 || u8[i] === 0x0a || u8[i] === 0x0d || u8[i] === 0x09 || u8[i] === 0xef || u8[i] === 0xbb || u8[i] === 0xbf)) i++;
+    if (u8[i] === 0x7b) return decodeVehiclePositionsJson(JSON.parse(new TextDecoder().decode(u8)));
+    return decodeVehiclePositions(buf);
+  }
+
   // ---- proxy / fetch helpers (same conventions as tracking.js) ----
   function proxyBase() {
     let p = window.TRACKING_PROXY || '/proxy/';
@@ -252,6 +283,19 @@
     try { return (localStorage.getItem(name) || '').trim() || null; }
     catch { return null; }
   };
+
+  async function finishVehicles(a, vehicles) {
+    if (a.routeMap) {
+      // static route_id → short-name table (agencies whose realtime feed
+      // uses internal numeric ids, e.g. TransLink)
+      a._rm = a._rm || fetch(a.routeMap + '?v=' + (window.APP_VERSION || '1'))
+        .then(r => r.json()).catch(() => ({}));
+      const rm = await a._rm;
+      vehicles.forEach(v => { if (v.route && rm[v.route]) v.route = rm[v.route]; });
+    }
+    if (a.routeShort) vehicles.forEach(v => { if (v.route) v.route = a.routeShort(v.route); });
+    return vehicles;
+  }
 
   async function fetchFeed(a) {
     const key = a.keyName ? getKey(a.keyName) : null;
@@ -269,11 +313,11 @@
       const headers = (key && a.keyHeader) ? { [a.keyHeader]: key } : undefined;
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return decodeVehiclePositions(await res.arrayBuffer());
+      return finishVehicles(a, decodeAny(await res.arrayBuffer()));
     }
     const res = await fetch(`${proxyBase()}${a.host}/${a.path}${params}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const vehicles = decodeVehiclePositions(await res.arrayBuffer());
+    const vehicles = finishVehicles(a, decodeAny(await res.arrayBuffer()));
     if (a.tripFeed && vehicles.some(v => !v.route && v.trip)) {
       try {
         const tr = await fetch(`${proxyBase()}${a.host}/${a.tripFeed}`);
@@ -564,3 +608,4 @@
     }
   });
 })();
+
