@@ -94,6 +94,30 @@
 
   function fmtMbbl(bbl) { return (bbl / 1e6).toFixed(1) + ' Mbbl'; }
 
+  // Month-over-month change line + 5-yr sparkline from reg.series
+  // ([['YYYY-MM', bbl], …], oldest → newest; absent in pre-history JSONs).
+  function stocksHistoryHTML(reg, width) {
+    const s = reg.series;
+    if (!Array.isArray(s) || s.length < 2) return '';
+    const [prevMonth, prevBbl] = s[s.length - 2];
+    const d = reg.bbl - prevBbl;
+    const up = d >= 0;
+    const delta = `<div style="font-size:11px;margin-top:2px;color:${up ? '#b91c1c' : '#15803d'};">` +
+      `${up ? '▲' : '▼'} ${up ? '+' : '−'}${fmtMbbl(Math.abs(d))} vs ${eh(prevMonth)}</div>`;
+    const w = width || 170, hgt = 26;
+    const vals = s.map(p => p[1]);
+    const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+    const pt = (v, i) =>
+      `${(i / (s.length - 1) * w).toFixed(1)},${(hgt - 3 - (v - lo) / span * (hgt - 6)).toFixed(1)}`;
+    const line = vals.map((v, i) => pt(v, i)).join(' ');
+    const last = pt(vals[vals.length - 1], vals.length - 1).split(',');
+    return delta +
+      `<svg width="${w}" height="${hgt}" style="display:block;margin-top:2px;">` +
+      `<polyline points="${line}" fill="none" stroke="#7f1d1d" stroke-width="1.3"/>` +
+      `<circle cx="${last[0]}" cy="${last[1]}" r="2" fill="#7f1d1d"/></svg>` +
+      `<span style="font-size:10px;color:#6b7280;">${eh(s[0][0])} → ${eh(reg.month)} monthly</span>`;
+  }
+
   async function loadStocks() {
     try {
       const res = await fetch('data/canada-crude-stocks.json?v=' + (window.APP_VERSION || '1'));
@@ -122,7 +146,7 @@
             `<div style="width:${pct}%;height:100%;background:${color};"></div></div>` +
             `<span style="font-size:10px;color:#6b7280;">${pct}% of 5-yr range ` +
             `(${fmtMbbl(reg.min5y)}–${fmtMbbl(reg.max5y)}) · StatCan 25-10-0063, provincial</span>`
-          : '') + `</div>`;
+          : '') + stocksHistoryHTML(reg, 170) + `</div>`;
     }
     return `<b>🛢 ${eh(h.city)} storage hub</b>` +
       `<div>Total shell capacity: <b>${fmtMbbl(h.bbl)}</b></div>` +
@@ -165,8 +189,13 @@
         const el = document.getElementById('pipe-stocks-status');
         if (el) {
           const ca = stocks?.regions?.CA;
+          let mom = '';
+          if (Array.isArray(ca?.series) && ca.series.length >= 2) {
+            const d = ca.bbl - ca.series[ca.series.length - 2][1];
+            mom = ` · ${d >= 0 ? '▲+' : '▼−'}${(Math.abs(d)/1e6).toFixed(1)} Mbbl m/m`;
+          }
           el.textContent = ca
-            ? `CA transporter stocks ${(ca.bbl/1e6).toFixed(0)} Mbbl (${ca.month}) · ${ca.pctOfRange}% of 5-yr range`
+            ? `CA transporter stocks ${(ca.bbl/1e6).toFixed(0)} Mbbl (${ca.month}) · ${ca.pctOfRange}% of 5-yr range${mom}`
             : 'crude-stocks data unavailable';
         }
       });
@@ -225,3 +254,4 @@
     }
   });
 })();
+

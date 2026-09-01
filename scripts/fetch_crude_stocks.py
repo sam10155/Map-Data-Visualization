@@ -41,8 +41,23 @@ def main():
                        for v in VECTORS.values()]).encode()
     req = urllib.request.Request(WDS, data=body,
                                  headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        resp = json.load(r)
+    # StatCan occasionally times out (observed 2026-09-01 from a GitHub
+    # runner); with a twice-monthly schedule, one blip must not fail the
+    # run — retry with backoff before giving up.
+    resp = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                resp = json.load(r)
+            break
+        except Exception as e:
+            if attempt == 3:
+                raise
+            wait = 30 * (attempt + 1)
+            print(f'attempt {attempt + 1} failed ({e}); retrying in {wait}s',
+                  file=sys.stderr)
+            import time
+            time.sleep(wait)
 
     by_vector = {}
     for item in resp:
@@ -73,6 +88,9 @@ def main():
             'min5y': round(lo),
             'max5y': round(hi),
             'pctOfRange': pct,
+            # full 5-year monthly history (oldest → newest) so the map can
+            # show month-over-month change and a sparkline
+            'series': [[r[:7], round(v)] for r, v in pts],
         }
 
     OUT.write_text(json.dumps(out, separators=(',', ':')))
@@ -82,3 +100,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
