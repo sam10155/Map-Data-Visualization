@@ -350,6 +350,75 @@
     return out;
   }
 
+  // ---- rail snapping ----
+  // GTFS-RT positions are raw GPS; trains drawn there sit beside the
+  // track at odd angles. Snap regional/VIA trains to the nearest segment
+  // of data/canada-rail.geojson (already shipped for the Rail layer) and
+  // align the icon to the track bearing. Loaded lazily on first use.
+  const SNAP_MAX_M = 400;
+  const RAIL_CELL = 0.05;   // ~5 km grid cells
+  let railGrid = null, railLoading = null;
+
+  function ensureRailGrid() {
+    if (railGrid || railLoading) return railLoading;
+    railLoading = fetch('data/canada-rail.geojson?v=' + (window.APP_VERSION || '1'))
+      .then(r => r.json())
+      .then(gj => {
+        const grid = {};
+        const key = (la, lo) => `${Math.round(la / RAIL_CELL)}_${Math.round(lo / RAIL_CELL)}`;
+        (gj.features || []).forEach(f => {
+          const c = f.geometry && f.geometry.coordinates;
+          if (!c || f.geometry.type !== 'LineString') return;
+          for (let i = 1; i < c.length; i++) {
+            const seg = [c[i-1][1], c[i-1][0], c[i][1], c[i][0]];   // [aLat,aLon,bLat,bLon]
+            const mla = (seg[0] + seg[2]) / 2, mlo = (seg[1] + seg[3]) / 2;
+            (grid[key(mla, mlo)] = grid[key(mla, mlo)] || []).push(seg);
+          }
+        });
+        railGrid = grid;
+      })
+      .catch(e => { console.warn('[transit] rail geometry unavailable — no snapping', e); railGrid = {}; });
+    return railLoading;
+  }
+
+  // Project (lat,lon) onto the nearest rail segment in the 3×3 cell
+  // neighbourhood; returns {lat, lon, bearing} or null if none in range.
+  function snapToRail(lat, lon) {
+    if (!railGrid) return null;
+    const kx = Math.round(lat / RAIL_CELL), ky = Math.round(lon / RAIL_CELL);
+    const cosl = Math.cos(lat * Math.PI / 180);
+    let best = null, bestD2 = (SNAP_MAX_M / 111320) ** 2;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const segs = railGrid[`${kx+dx}_${ky+dy}`];
+      if (!segs) continue;
+      for (const [aLat, aLon, bLat, bLon] of segs) {
+        const ax = (aLon - lon) * cosl, ay = aLat - lat;
+        const bx = (bLon - lon) * cosl, by = bLat - lat;
+        const dxs = bx - ax, dys = by - ay;
+        const len2 = dxs*dxs + dys*dys;
+        const u = len2 ? Math.max(0, Math.min(1, -(ax*dxs + ay*dys) / len2)) : 0;
+        const px = ax + u*dxs, py = ay + u*dys;
+        const d2 = px*px + py*py;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = {
+            lat: lat + py, lon: lon + px / cosl,
+            bearing: (Math.atan2(dxs, dys) * 180 / Math.PI + 360) % 360,
+          };
+        }
+      }
+    }
+    return best;
+  }
+
+  // Track bearing is directionless — flip it to whichever heading is
+  // closer to the vehicle's reported bearing.
+  function alignBearing(trackB, vehB) {
+    if (vehB == null) return trackB;
+    const diff = Math.abs(((trackB - vehB) + 540) % 360 - 180);
+    return diff > 90 ? (trackB + 180) % 360 : trackB;
+  }
+
   // ---- icons (top-down, rotated to bearing, livery-coloured) ----
   function busIcon(color, bearing) {
     return L.divIcon({
@@ -358,7 +427,7 @@
         <g transform="rotate(${bearing || 0})">
           <rect x="-3.4" y="-7" width="6.8" height="14" rx="2"
                 fill="${color}" stroke="white" stroke-width="1"/>
-          <path d="M-2.6,-6.5 L0,-7.6 L2.6,-6.5 L2.6,-4.9 L-2.6,-4.9 Z" fill="#1f2937" opacity="0.8"/>
+          <path d="M-2.9,-6.7 L0,-7.9 L2.9,-6.7 L2.9,-4.4 L-2.9,-4.4 Z" fill="#1f2937" opacity="0.85"/>
           <rect x="-4.2" y="-5.6" width="0.9" height="2" rx="0.3" fill="${color}"/>
           <rect x="3.3" y="-5.6" width="0.9" height="2" rx="0.3" fill="${color}"/>
           <rect x="-2.5" y="-3" width="5" height="1.4" rx="0.3" fill="white" opacity="0.55"/>
@@ -369,12 +438,14 @@
     });
   }
   function streetcarIcon(color, bearing) {
-    // Long, narrow articulated body with a pantograph — visually distinct
-    // from the short wide bus (mirrors) at a glance.
+    // Long, narrow articulated body with a pantograph — plus rails under
+    // the vehicle so rail modes read instantly against buses.
     return L.divIcon({
       className: 'track-transit',
-      html: `<svg width="20" height="24" viewBox="-10 -12 20 24">
+      html: `<svg width="20" height="26" viewBox="-10 -13 20 26">
         <g transform="rotate(${bearing || 0})">
+          <line x1="-2.1" y1="-12.5" x2="-2.1" y2="12.5" stroke="#6b7280" stroke-width="0.8" opacity="0.75"/>
+          <line x1="2.1" y1="-12.5" x2="2.1" y2="12.5" stroke="#6b7280" stroke-width="0.8" opacity="0.75"/>
           <rect x="-2.5" y="-11" width="5" height="9.6" rx="1.6"
                 fill="${color}" stroke="white" stroke-width="0.9"/>
           <rect x="-2.5" y="-0.4" width="5" height="4.4" rx="0.8"
@@ -394,8 +465,10 @@
   function lrtIcon(color, bearing) {
     return L.divIcon({
       className: 'track-transit',
-      html: `<svg width="20" height="22" viewBox="-10 -11 20 22">
+      html: `<svg width="20" height="26" viewBox="-10 -13 20 26">
         <g transform="rotate(${bearing || 0})">
+          <line x1="-2.2" y1="-12.5" x2="-2.2" y2="12.5" stroke="#6b7280" stroke-width="0.8" opacity="0.75"/>
+          <line x1="2.2" y1="-12.5" x2="2.2" y2="12.5" stroke="#6b7280" stroke-width="0.8" opacity="0.75"/>
           <path d="M-2.9,-10 L-1.5,-11.4 Q0,-12 1.5,-11.4 L2.9,-10 L2.9,-0.8 L-2.9,-0.8 Z"
                 fill="${color}" stroke="white" stroke-width="1"/>
           <rect x="-2.9" y="0.3" width="5.8" height="10" rx="1.3"
@@ -411,11 +484,14 @@
     });
   }
   function trainIcon(color, bearing) {
-    // Locomotive + two coaches — regional/intercity trains (GO, UP, VIA).
+    // Locomotive + two coaches — regional/intercity trains (GO, UP, VIA),
+    // riding on visible rails.
     return L.divIcon({
       className: 'track-transit',
-      html: `<svg width="26" height="26" viewBox="-13 -13 26 26">
+      html: `<svg width="26" height="30" viewBox="-13 -15 26 30">
         <g transform="rotate(${bearing || 0})">
+          <line x1="-2.3" y1="-14.5" x2="-2.3" y2="14.5" stroke="#6b7280" stroke-width="0.9" opacity="0.75"/>
+          <line x1="2.3" y1="-14.5" x2="2.3" y2="14.5" stroke="#6b7280" stroke-width="0.9" opacity="0.75"/>
           <path d="M-3,-12 L-1.6,-13.6 Q0,-14.3 1.6,-13.6 L3,-12 L3,-4.4 L-3,-4.4 Z"
                 fill="${color}" stroke="white" stroke-width="1"/>
           <path d="M-1.9,-11.7 L0,-12.7 L1.9,-11.7 L1.9,-10 L-1.9,-10 Z" fill="#1f2937" opacity="0.85"/>
@@ -472,6 +548,7 @@
 
       async function poll() {
         if (!mapRef || unmounted) return;
+        if ((visible.regional || visible.via) && !railGrid) ensureRailGrid();
         const z = mapRef.getZoom();
         const b = mapRef.getBounds();
         const view = b.pad(0.15);
@@ -507,6 +584,10 @@
             if (MODES[mode].local && z < LOCAL_ZOOM) return;
             const localIcons = MODES[mode].local ? useIcons : true;
             if (localIcons && MODES[mode].local && !view.contains([v.lat, v.lon])) return;
+            if (mode === 'regional') {
+              const s = snapToRail(v.lat, v.lon);
+              if (s) { v.lat = s.lat; v.lon = s.lon; v.bearing = alignBearing(s.bearing, v.bearing); }
+            }
             const tip =
               `<b>${MODES[mode].label.slice(0, 2)} ${eh(a.label)}${v.route ? ' · ' + eh(String(v.route).replace(/^zenbus:\w+:/, '')) : ''}</b>` +
               (v.label || v.vid ? `<br>vehicle ${eh(v.label || v.vid)}` : '') +
@@ -523,7 +604,10 @@
 
         (viaTrains || []).forEach(t => {
           const late = t.next?.lateMin;
-          L.marker([t.lat, t.lon], { icon: trainIcon('#b8860b', t.dir), keyboard: false })
+          let vlat = t.lat, vlon = t.lon, vdir = t.dir;
+          const s = snapToRail(vlat, vlon);
+          if (s) { vlat = s.lat; vlon = s.lon; vdir = alignBearing(s.bearing, vdir); }
+          L.marker([vlat, vlon], { icon: trainIcon('#b8860b', vdir), keyboard: false })
             .bindTooltip(
               `<b>🚄 VIA ${eh(t.no)}</b><br>${eh(t.from || '')} → ${eh(t.to || '')}` +
               (t.next ? `<br>next: ${eh(t.next.station)}${t.next.eta ? ' · ' + eh(t.next.eta) : ''}` +
